@@ -130,6 +130,24 @@ async function handleExternalRequest(
 }
 
 export function setupExternalBridge(): void {
+  // One-shot ping endpoint for capability probes. Web app uses
+  // chrome.runtime.sendMessage(extensionId, {type:"divinci:ping"})
+  // before opening a port, so it can decide whether to surface the
+  // extension picker option without paying the port-setup cost.
+  chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+    if (!isAllowedOrigin(sender.origin)) return
+    if (msg?.type === 'divinci:ping') {
+      const manifest = chrome.runtime.getManifest()
+      sendResponse({
+        type: 'divinci:pong',
+        extensionVersion: manifest.version,
+        supportedModels: Object.keys(MODELS),
+      })
+      return true
+    }
+    return undefined
+  })
+
   chrome.runtime.onConnectExternal.addListener((port) => {
     const origin = port.sender?.origin
     if (!isAllowedOrigin(origin)) {
