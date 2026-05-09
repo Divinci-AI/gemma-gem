@@ -30,11 +30,26 @@ if (!ALLOWED_MODES.has(mode)) {
   throw new Error(`Invalid mode "${mode}". Allowed: ${[...ALLOWED_MODES].join(', ')}`)
 }
 
+// Pinned public key for a stable extension ID across every machine that
+// loads this unpacked. Derives the deterministic ID
+// `laeebjagghfeepomjhbfohefghonemeo` so the web app's extension-capabilities
+// probe can hardcode that one value instead of using a localStorage dev
+// override per developer.
+//
+// The private half lives in this repo's sibling
+// `divinci-ai/server/private-keys/extensions/divinci-local-inference/private.pem`
+// — committed to the private-keys submodule, not to this public-ish fork.
+// You only need the private key to sign a `.crx` for sideload; loading
+// unpacked doesn't require it.
+const MANIFEST_PUBLIC_KEY =
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsGNVAMfM6OPVfbS/0QGMRbKHv04SmYg5wHhpJZRVXh/6jbEKP4Rx71nI11fisIzGkbjYSDeUlZoWQrcbP9sJmoYAt32b/Ceodix4cYxUHk+slhYHJRojfu+XDUAms3lZDUpJgC5aD6nrKDWq0fZ0npT4tfxsgtDygrjEexDlhBx2y07gUULkuAqPDuqHwl4m7oZE5QXCvRGuMlZVenw32YejpXlZJrAKdcibz2R4X8eCEhNkQDWlXeuLG0kYijP44Pq7LbKh5M3ucad9WFNBbDVdqeone9COO91zcv8asvQCfyUoYM3EQVdg7HepnSrZmnKnOwak4ugeZerFP+EqjwIDAQAB'
+
 export default defineConfig({
   manifest: {
     name: mode === 'development' ? 'Divinci Local Inference [dev]' : 'Divinci Local Inference',
     description:
       'In-browser Gemma 4 inference via WebGPU for chat.divinci.app — model loads once, stays cached, shared across tabs.',
+    key: MANIFEST_PUBLIC_KEY,
     permissions: ['offscreen', 'storage'],
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.
