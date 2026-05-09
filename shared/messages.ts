@@ -74,6 +74,17 @@ export interface DivinciExternalLoadProgressEvent {
   currentFile?: string
 }
 
+/**
+ * Sent when a chat is enqueued behind another chat (multi-tab fairness).
+ * Position 0 means "next up"; position N means "N chats ahead of you".
+ * Optional — only fired when getQueueDepth() > 1 at submit time.
+ */
+export interface DivinciExternalQueuedEvent {
+  type: 'divinci:queued'
+  requestId: string
+  position: number
+}
+
 export interface DivinciExternalLoadDoneEvent {
   type: 'divinci:load-done'
   requestId: string
@@ -110,6 +121,7 @@ export type DivinciExternalEvent =
   | DivinciExternalPong
   | DivinciExternalLoadProgressEvent
   | DivinciExternalLoadDoneEvent
+  | DivinciExternalQueuedEvent
   | DivinciExternalChatTokenEvent
   | DivinciExternalChatDoneEvent
   | DivinciExternalAbortedEvent

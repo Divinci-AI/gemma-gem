@@ -54,7 +54,14 @@ export class ChatHost {
   // The transformers.js StoppingCriteria currently steering an active
   // generate() loop. interrupt() it to stop within one token.
   private activeStopper: InstanceType<typeof InterruptableStoppingCriteria> | null = null
-  private chatActive = false
+  // Serial queue: each chat() request waits for the previous to settle.
+  // ChatHost runs ONE generation at a time on ONE GPU device; concurrent
+  // callers (e.g. two browser tabs hitting the extension simultaneously)
+  // get queued, not rejected. The tail tracks whichever chat is most
+  // recently appended; new chat()s chain on after it. We keep a `pending`
+  // count for observability (used by getQueueDepth()).
+  private chatQueueTail: Promise<unknown> = Promise.resolve()
+  private pending = 0
 
   isLoaded(modelId?: ModelId): boolean {
     if (!this.model) return false
@@ -120,15 +127,42 @@ export class ChatHost {
     log.info(`Loaded ${modelId}`)
   }
 
+  /**
+   * Queue depth (chats waiting for their turn, plus the one running).
+   * 0 = nothing in flight. Use this to surface a "queued" UI hint to the
+   * user when their chat has to wait.
+   */
+  getQueueDepth(): number {
+    return this.pending
+  }
+
   async chat(opts: ChatOptions, onToken: ChatTokenFn): Promise<{
     fullText: string
     tokensGenerated: number
     durationMs: number
   }> {
     if (!this.model || !this.tokenizer) throw new Error('Model not loaded — call load() first')
-    if (this.chatActive) throw new Error('Another generation is in progress')
 
-    this.chatActive = true
+    this.pending += 1
+    // Append our work as the new tail. Suppress prior-chat errors at the
+    // queue boundary so a thrown chat doesn't poison the queue for everyone
+    // after it. Each caller still sees its own errors via the returned promise.
+    const myWork = this.chatQueueTail
+      .catch(() => undefined)
+      .then(() => this.runChat(opts, onToken))
+    this.chatQueueTail = myWork.catch(() => undefined)
+    try {
+      return await myWork
+    } finally {
+      this.pending -= 1
+    }
+  }
+
+  private async runChat(opts: ChatOptions, onToken: ChatTokenFn): Promise<{
+    fullText: string
+    tokensGenerated: number
+    durationMs: number
+  }> {
     const start = Date.now()
     let tokensGenerated = 0
     let fullText = ''
@@ -171,7 +205,6 @@ export class ChatHost {
 
       return { fullText, tokensGenerated, durationMs: Date.now() - start }
     } finally {
-      this.chatActive = false
       this.activeStopper = null
     }
   }
@@ -201,7 +234,8 @@ export class ChatHost {
     this.tokenizer = null
     this.currentModelId = null
     this.activeStopper = null
-    this.chatActive = false
+    this.chatQueueTail = Promise.resolve()
+    this.pending = 0
   }
 
   getCurrentModelId(): ModelId | null {

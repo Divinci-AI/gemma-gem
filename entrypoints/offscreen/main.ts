@@ -23,11 +23,17 @@ import type {
 
 const host = new ChatHost()
 
-// Caller (port id) + requestId of the in-flight chat, plus a flag the
-// streamer reads on each token to decide whether to suppress emission
-// (used after an abort so we don't post tokens for a request the caller
-// doesn't want anymore). One generation at a time: ChatHost enforces it.
-let activeChat: { caller: string; requestId: string; aborted: boolean } | null = null
+// All chats currently in the system: queued (waiting on ChatHost.chatQueueTail)
+// and running (head of the queue). Keyed by `${caller}::${requestId}` so
+// handleAbort can find the right one whether it's running or still queued.
+// The `aborted` flag is read by the streamer callback to suppress token
+// emission, AND read at the start of runChat to short-circuit a queued
+// chat that was aborted before its turn to run.
+type ChatState = { caller: string; requestId: string; aborted: boolean }
+const chats = new Map<string, ChatState>()
+function chatKey(caller: string, requestId: string): string {
+  return `${caller}::${requestId}`
+}
 
 function emit(caller: string, event: DivinciExternalEvent): void {
   const msg: Message = { type: 'internal:event', caller, event }
@@ -76,20 +82,28 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     })
     return
   }
-  if (activeChat) {
+
+  const state: ChatState = { caller: req.caller, requestId: req.requestId, aborted: false }
+  const key = chatKey(req.caller, req.requestId)
+  chats.set(key, state)
+
+  // If something is already running ahead of us, surface a `queued` event so
+  // the caller can show a "waiting in line" UX instead of looking idle.
+  if (host.getQueueDepth() > 1) {
     emit(req.caller, {
-      type: 'divinci:error',
+      type: 'divinci:queued',
       requestId: req.requestId,
-      message: 'Another generation is in progress',
-      fatal: false,
+      position: host.getQueueDepth() - 1,
     })
-    return
   }
 
-  const chatState = { caller: req.caller, requestId: req.requestId, aborted: false }
-  activeChat = chatState
-
   try {
+    // host.chat() handles the serial queueing across callers. We pass an
+    // onToken that short-circuits if we've been aborted (so a late abort
+    // doesn't leak tokens). If state.aborted is true BEFORE the model
+    // starts (queued chat aborted before its turn), the streamer just
+    // never fires for any tokens; the abort short-circuit also keeps any
+    // late tokens out of fullText for the response event.
     const result = await host.chat(
       {
         messages: req.messages,
@@ -98,7 +112,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
         topP: req.topP,
       },
       (delta) => {
-        if (chatState.aborted) return
+        if (state.aborted) return
         emit(req.caller, {
           type: 'divinci:chat-token',
           requestId: req.requestId,
@@ -107,7 +121,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       },
     )
 
-    if (chatState.aborted) {
+    if (state.aborted) {
       emit(req.caller, { type: 'divinci:aborted', requestId: req.requestId })
     } else {
       emit(req.caller, {
@@ -126,24 +140,29 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       fatal: false,
     })
   } finally {
-    if (activeChat === chatState) activeChat = null
+    chats.delete(key)
   }
 }
 
 function handleAbort(req: InternalAbortRequest): void {
-  if (!activeChat) return
-  if (activeChat.caller !== req.caller) {
-    log.warn('Abort from different caller ignored')
-    return
-  }
-  // requestId === '*' is a wildcard meaning "any in-flight chat for this
-  // caller". Used by the bridge on port disconnect to clean up an orphaned
-  // generation when a SW eviction or web-app navigation kills the port —
-  // without this match the chat keeps streaming tokens to a dead port and
+  // Wildcard match (requestId === '*') aborts every chat owned by this
+  // caller. Used by the bridge on port disconnect to clean up orphaned
+  // generations when a SW eviction or web-app navigation kills the port
+  // — without this the chats keep streaming tokens to a dead port and
   // the GPU stays busy until max_new_tokens is hit.
-  if (req.requestId !== '*' && activeChat.requestId !== req.requestId) return
-  activeChat.aborted = true
-  host.abort()
+  let abortedAny = false
+  for (const [, state] of chats) {
+    if (state.caller !== req.caller) continue
+    if (req.requestId !== '*' && state.requestId !== req.requestId) continue
+    state.aborted = true
+    abortedAny = true
+  }
+  // Only interrupt the currently-running ChatHost generation if at least
+  // one of the aborted chats is the one actually executing right now.
+  // ChatHost.abort() interrupts whichever chat is at the head of the queue
+  // — fine because queued-but-not-yet-started chats short-circuit via
+  // their state.aborted flag when their turn comes.
+  if (abortedAny) host.abort()
 }
 
 chrome.runtime.onMessage.addListener((message: InternalRequest) => {
