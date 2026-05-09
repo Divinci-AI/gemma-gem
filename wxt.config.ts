@@ -68,6 +68,13 @@ export default defineConfig({
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
+    // Toolbar icon opens the popup management UI. WXT auto-detects
+    // entrypoints/popup/index.html and emits popup.html in the build,
+    // so the path here matches the WXT build output (not the source path).
+    action: {
+      default_title: 'Divinci Local Inference',
+      default_popup: 'popup.html',
+    },
   },
   vite: () => ({
     build: {

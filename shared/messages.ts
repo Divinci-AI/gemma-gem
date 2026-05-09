@@ -154,7 +154,45 @@ export interface InternalAbortRequest {
   caller: string
 }
 
-export type InternalRequest = InternalLoadRequest | InternalChatRequest | InternalAbortRequest
+/**
+ * Same-origin status query (used by the popup UI). Not exposed over
+ * externally_connectable; the popup talks directly to the offscreen via
+ * chrome.runtime.sendMessage.
+ */
+export interface InternalStatusRequest {
+  type: 'internal:status'
+}
+
+export interface InternalStatusResponse {
+  type: 'internal:status-response'
+  currentModelId: ModelId | null
+  isLoaded: boolean
+  queueDepth: number
+  /** Currently downloading file path + bytes (when not idle), for the popup. */
+  loadProgress: {
+    fraction: number | null
+    bytesLoaded: number
+    bytesTotal: number | null
+    currentFile?: string
+  } | null
+}
+
+/**
+ * Same-origin unload request from the popup. Drops the model from VRAM.
+ * Doesn't clear the on-disk Cache API entries — model bytes survive for
+ * the next load. To reclaim disk, the user clears the extension's site
+ * data via chrome://extensions.
+ */
+export interface InternalUnloadRequest {
+  type: 'internal:unload'
+}
+
+export type InternalRequest =
+  | InternalLoadRequest
+  | InternalChatRequest
+  | InternalAbortRequest
+  | InternalStatusRequest
+  | InternalUnloadRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {

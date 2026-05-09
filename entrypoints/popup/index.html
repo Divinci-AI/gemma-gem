@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Divinci Local Inference</title>
+    <link rel="stylesheet" href="./popup.css" />
+  </head>
+  <body>
+    <header>
+      <img src="/icon/48.png" alt="Divinci" width="32" height="32" />
+      <div>
+        <h1>Divinci Local Inference</h1>
+        <p class="subtitle">Gemma 4, on your GPU</p>
+      </div>
+    </header>
+
+    <section id="status">
+      <div class="status-row">
+        <span class="status-label">Loaded model</span>
+        <span class="status-value" id="status-model">—</span>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Queue depth</span>
+        <span class="status-value" id="status-queue">—</span>
+      </div>
+      <div id="status-progress" class="status-progress" hidden>
+        <div class="progress-label">
+          <span id="progress-file">—</span>
+          <span id="progress-pct">0%</span>
+        </div>
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+      </div>
+    </section>
+
+    <section id="models">
+      <div class="model-card" data-model-id="gemma-4-e2b">
+        <div class="model-meta">
+          <strong>Gemma 4 E2B</strong>
+          <span class="model-size">~2.9 GB · text-only</span>
+        </div>
+        <button class="model-action" data-action="load" data-model-id="gemma-4-e2b">Load</button>
+      </div>
+      <div class="model-card" data-model-id="gemma-4-e4b">
+        <div class="model-meta">
+          <strong>Gemma 4 E4B</strong>
+          <span class="model-size">~4.6 GB · stronger reasoning, ~12 GB RAM</span>
+        </div>
+        <button class="model-action" data-action="load" data-model-id="gemma-4-e4b">Load</button>
+      </div>
+      <button id="unload-btn" class="unload-action" hidden>Unload model from GPU</button>
+    </section>
+
+    <footer>
+      <a href="https://github.com/Divinci-AI/gemma-gem" target="_blank" rel="noopener">Source</a>
+      <span>·</span>
+      <span id="version">v—</span>
+    </footer>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

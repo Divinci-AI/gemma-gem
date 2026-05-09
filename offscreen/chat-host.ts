@@ -98,12 +98,15 @@ export class ChatHost {
         totalLoaded = Math.max(totalLoaded, p.loaded ?? 0)
         if (typeof p.total === 'number') totalExpected = p.total
         lastFile = p.file
-        onProgress?.({
-          fraction: typeof p.progress === 'number' && Number.isFinite(p.progress) ? p.progress / 100 : null,
+        const snapshot = {
+          fraction:
+            typeof p.progress === 'number' && Number.isFinite(p.progress) ? p.progress / 100 : null,
           bytesLoaded: totalLoaded,
           bytesTotal: totalExpected,
           currentFile: lastFile,
-        })
+        }
+        this.latestProgress = snapshot
+        onProgress?.(snapshot)
       }
     }
 
@@ -124,6 +127,7 @@ export class ChatHost {
     this.tokenizer = tokenizer
     this.model = model
     this.currentModelId = modelId
+    this.latestProgress = null // load complete — clear download bar
     log.info(`Loaded ${modelId}`)
   }
 
@@ -134,6 +138,23 @@ export class ChatHost {
    */
   getQueueDepth(): number {
     return this.pending
+  }
+
+  /**
+   * Latest in-flight load progress, or null when not currently loading.
+   * Used by the popup UI to render a download bar without subscribing to
+   * the chat-host event stream. Updated on every progress callback during
+   * load(). Cleared (back to null) once load completes or fails.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private latestProgress: any = null
+  getLatestProgress(): {
+    fraction: number | null
+    bytesLoaded: number
+    bytesTotal: number | null
+    currentFile?: string
+  } | null {
+    return this.latestProgress
   }
 
   async chat(opts: ChatOptions, onToken: ChatTokenFn): Promise<{

@@ -18,6 +18,7 @@ import type {
   InternalLoadRequest,
   InternalChatRequest,
   InternalAbortRequest,
+  InternalStatusResponse,
   DivinciExternalEvent,
 } from '@/shared/messages'
 
@@ -171,7 +172,8 @@ function handleAbort(req: InternalAbortRequest): void {
   if (abortedAny) host.abort()
 }
 
-chrome.runtime.onMessage.addListener((message: InternalRequest) => {
+chrome.runtime.onMessage.addListener(
+  (message: InternalRequest, _sender, sendResponse) => {
   switch (message.type) {
     case 'internal:load':
       void handleLoad(message)
@@ -181,6 +183,20 @@ chrome.runtime.onMessage.addListener((message: InternalRequest) => {
       break
     case 'internal:abort':
       handleAbort(message)
+      break
+    case 'internal:status': {
+      const resp: InternalStatusResponse = {
+        type: 'internal:status-response',
+        currentModelId: host.getCurrentModelId(),
+        isLoaded: host.isLoaded(),
+        queueDepth: host.getQueueDepth(),
+        loadProgress: host.getLatestProgress(),
+      }
+      sendResponse(resp)
+      return true
+    }
+    case 'internal:unload':
+      void host.dispose().catch((e) => log.error('unload failed:', e))
       break
   }
 })
