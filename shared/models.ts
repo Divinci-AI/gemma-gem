@@ -59,11 +59,22 @@ export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
 
 /**
  * Web app origins allowed to talk to this extension via
- * externally_connectable. Mirrored in wxt.config.ts manifest.
+ * externally_connectable. Mirrored in wxt.config.ts manifest, plus
+ * runtime-checked in external-bridge.ts isAllowedOrigin (defense in
+ * depth). The localhost entry is dev-only — see wxt.config.ts comment
+ * for the security rationale (random :8080 services would otherwise
+ * gain free GPU access).
+ *
+ * `import.meta.env.DEV` is set by Vite/WXT during `pnpm dev`/`pnpm build`
+ * (development mode) and false during `pnpm build:prod`.
  */
+const isDevBuild =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
+
 export const ALLOWED_WEB_APP_ORIGINS = [
   'https://chat.divinci.app',
   'https://chat.stage.divinci.app',
   'https://chat.dev.divinci.app',
-  'http://localhost:8080',
+  ...(isDevBuild ? ['http://localhost:8080'] : []),
 ]

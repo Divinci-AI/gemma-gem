@@ -85,15 +85,21 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
 
   const state: ChatState = { caller: req.caller, requestId: req.requestId, aborted: false }
   const key = chatKey(req.caller, req.requestId)
+
+  // Per-caller depth: count chats already in the system for THIS caller
+  // (not global) so the queued event doesn't leak cross-caller activity.
+  // Cross-origin attackers (well, our other allowed origins) shouldn't
+  // be able to observe each other's chat traffic via the queue depth.
+  // Compute BEFORE adding our own state so the position reflects how
+  // many chats are ahead of us for this caller specifically.
+  const aheadForCaller = [...chats.values()].filter((c) => c.caller === req.caller).length
   chats.set(key, state)
 
-  // If something is already running ahead of us, surface a `queued` event so
-  // the caller can show a "waiting in line" UX instead of looking idle.
-  if (host.getQueueDepth() > 1) {
+  if (aheadForCaller > 0) {
     emit(req.caller, {
       type: 'divinci:queued',
       requestId: req.requestId,
-      position: host.getQueueDepth() - 1,
+      position: aheadForCaller,
     })
   }
 

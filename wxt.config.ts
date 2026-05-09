@@ -53,12 +53,16 @@ export default defineConfig({
     permissions: ['offscreen', 'storage'],
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.
+    // localhost:8080 is intentionally dev-only. In a published .crx ANY
+    // process that binds :8080 (Tomcat, Jenkins, random Express boilerplate)
+    // could chrome.runtime.connect to us and consume the user's GPU. Dev
+    // mode keeps the entry for `pnpm start:dev` against the local web app.
     externally_connectable: {
       matches: [
         'https://chat.divinci.app/*',
         'https://chat.stage.divinci.app/*',
         'https://chat.dev.divinci.app/*',
-        'http://localhost:8080/*',
+        ...(mode === 'development' ? ['http://localhost:8080/*'] : []),
       ],
     },
     content_security_policy: {
