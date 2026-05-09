@@ -23,9 +23,11 @@ import type {
 
 const host = new ChatHost()
 
-// Caller (port id) -> in-flight requestId map. Used so an `internal:abort`
-// from a different caller doesn't accidentally cancel someone else's chat.
-let activeChat: { caller: string; requestId: string } | null = null
+// Caller (port id) + requestId of the in-flight chat, plus a flag the
+// streamer reads on each token to decide whether to suppress emission
+// (used after an abort so we don't post tokens for a request the caller
+// doesn't want anymore). One generation at a time: ChatHost enforces it.
+let activeChat: { caller: string; requestId: string; aborted: boolean } | null = null
 
 function emit(caller: string, event: DivinciExternalEvent): void {
   const msg: Message = { type: 'internal:event', caller, event }
@@ -84,8 +86,8 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     return
   }
 
-  activeChat = { caller: req.caller, requestId: req.requestId }
-  let aborted = false
+  const chatState = { caller: req.caller, requestId: req.requestId, aborted: false }
+  activeChat = chatState
 
   try {
     const result = await host.chat(
@@ -96,7 +98,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
         topP: req.topP,
       },
       (delta) => {
-        if (aborted) return
+        if (chatState.aborted) return
         emit(req.caller, {
           type: 'divinci:chat-token',
           requestId: req.requestId,
@@ -105,7 +107,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       },
     )
 
-    if (aborted) {
+    if (chatState.aborted) {
       emit(req.caller, { type: 'divinci:aborted', requestId: req.requestId })
     } else {
       emit(req.caller, {
@@ -124,26 +126,23 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       fatal: false,
     })
   } finally {
-    activeChat = null
+    if (activeChat === chatState) activeChat = null
   }
-
-  // Track abort intent so the streamer callback short-circuits.
-  // We can't return early from the await above; just suppress further
-  // events.
-  function setAborted() {
-    aborted = true
-  }
-  // Expose to the abort handler below.
-  ;(globalThis as unknown as { __setAborted: () => void }).__setAborted = setAborted
 }
 
 function handleAbort(req: InternalAbortRequest): void {
-  if (!activeChat || activeChat.requestId !== req.requestId) return
+  if (!activeChat) return
   if (activeChat.caller !== req.caller) {
     log.warn('Abort from different caller ignored')
     return
   }
-  ;(globalThis as unknown as { __setAborted?: () => void }).__setAborted?.()
+  // requestId === '*' is a wildcard meaning "any in-flight chat for this
+  // caller". Used by the bridge on port disconnect to clean up an orphaned
+  // generation when a SW eviction or web-app navigation kills the port —
+  // without this match the chat keeps streaming tokens to a dead port and
+  // the GPU stays busy until max_new_tokens is hit.
+  if (req.requestId !== '*' && activeChat.requestId !== req.requestId) return
+  activeChat.aborted = true
   host.abort()
 }
 
