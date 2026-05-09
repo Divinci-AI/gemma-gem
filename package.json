@@ -1,8 +1,8 @@
 {
-  "name": "gemma-gem",
-  "description": "Browser AI agent powered by Gemma 4 via WebGPU",
+  "name": "divinci-local-inference",
+  "description": "In-browser Gemma 4 inference for chat.divinci.app, via WebGPU + an offscreen document. Bridges chrome.runtime ports to a single shared model instance.",
   "license": "Apache-2.0",
-  "version": "0.3.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
@@ -16,12 +16,11 @@
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
+    "@types/chrome": "^0.1.42",
     "typescript": "^5.9.3",
     "wxt": "^0.20.20"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.1.0",
-    "@kessler/gemma-agent": "^3.0.0",
-    "marked": "^17.0.5"
+    "@huggingface/transformers": "4.2.0"
   }
 }

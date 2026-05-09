@@ -32,10 +32,20 @@ if (!ALLOWED_MODES.has(mode)) {
 
 export default defineConfig({
   manifest: {
-    name: mode === 'development' ? 'Gemma Gem [dev]' : 'Gemma Gem',
-    description: 'Browser AI agent powered by Gemma 4 via WebGPU',
-    permissions: ['activeTab', 'scripting', 'offscreen', 'storage'],
-    host_permissions: ['<all_urls>'],
+    name: mode === 'development' ? 'Divinci Local Inference [dev]' : 'Divinci Local Inference',
+    description:
+      'In-browser Gemma 4 inference via WebGPU for chat.divinci.app — model loads once, stays cached, shared across tabs.',
+    permissions: ['offscreen', 'storage'],
+    // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
+    // The bridge enforces the same list at runtime as defense-in-depth.
+    externally_connectable: {
+      matches: [
+        'https://chat.divinci.app/*',
+        'https://chat.stage.divinci.app/*',
+        'https://chat.dev.divinci.app/*',
+        'http://localhost:8080/*',
+      ],
+    },
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
