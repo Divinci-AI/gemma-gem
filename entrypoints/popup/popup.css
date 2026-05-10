@@ -137,6 +137,14 @@ header h1 {
   line-height: 1.4;
 }
 
+/* The HTML [hidden] attribute is `display: none` from the UA stylesheet
+   (low specificity); a class selector with `display: flex` overrides it,
+   which left the empty toast visible from page load until the first
+   render() pass. Explicit override pins the right behavior. */
+.error-toast[hidden] {
+  display: none;
+}
+
 .error-toast span {
   flex: 1;
   word-break: break-word;
