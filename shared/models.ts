@@ -70,8 +70,14 @@ export interface UserSettings {
   maxNewTokens: number
 }
 
+/**
+ * Default temperature is 0.7 (not 0/greedy) per Google's Gemma usage
+ * recommendations — greedy decoding gives "lifeless" responses for
+ * conversational chat. Power users who want determinism can set
+ * temperature: 0 in the popup. Web-app per-call params always override.
+ */
 export const DEFAULT_SETTINGS: UserSettings = {
-  temperature: 0,
+  temperature: 0.7,
   maxNewTokens: 512,
 }
 

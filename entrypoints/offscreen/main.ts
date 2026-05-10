@@ -11,6 +11,12 @@
  */
 
 import { ChatHost } from '@/offscreen/chat-host'
+import {
+  computeCacheBreakdown,
+  emptyBreakdown,
+  type CacheBreakdown,
+} from '@/offscreen/cache-breakdown'
+import { clampSettings } from '@/offscreen/settings-helpers'
 import { log } from '@/shared/logger'
 import type {
   Message,
@@ -23,10 +29,8 @@ import type {
   DivinciExternalEvent,
 } from '@/shared/messages'
 import {
-  MODELS,
   STORAGE_KEY_SETTINGS,
   DEFAULT_SETTINGS,
-  type ModelId,
   type UserSettings,
 } from '@/shared/models'
 
@@ -34,10 +38,7 @@ const host = new ChatHost()
 
 // Per-model cached-bytes breakdown. Recomputed after load-done and on
 // clear-cache (via recomputeCacheBreakdown()). Read out of getStatus().
-let cacheBreakdown: Record<ModelId, { isCached: boolean; bytes: number }> = {
-  'gemma-4-e2b': { isCached: false, bytes: 0 },
-  'gemma-4-e4b': { isCached: false, bytes: 0 },
-}
+let cacheBreakdown: CacheBreakdown = emptyBreakdown()
 
 // User-configurable inference defaults. Loaded from chrome.storage on
 // startup, applied as fallbacks in handleChat when the web-app didn't
@@ -75,55 +76,20 @@ function emit(caller: string, event: DivinciExternalEvent): void {
 }
 
 /**
- * Iterate every Cache API store this extension owns and group bytes
- * by model id. Each Cache entry is a fully-qualified HF URL — we
- * pattern-match the model's hfRepo to bucket the entry, then sum the
- * blob sizes to get per-model disk usage.
- *
- * O(n) over all cache entries × one blob() per entry. For 50 files at
- * ~50 MB each that's ~50 micro-fetches; cheap enough to run after every
- * load-done and clear-cache. NOT run from the regular status poll.
+ * Refresh the per-model cached-bytes snapshot from Cache API. Wraps
+ * the pure helper so module-level state stays write-once-per-call.
+ * Cheap: reads sizes from Content-Length headers (metadata-only).
  */
 async function recomputeCacheBreakdown(): Promise<void> {
-  const next: Record<ModelId, { isCached: boolean; bytes: number }> = {
-    'gemma-4-e2b': { isCached: false, bytes: 0 },
-    'gemma-4-e4b': { isCached: false, bytes: 0 },
-  }
   try {
-    if (typeof caches === 'undefined') {
-      cacheBreakdown = next
-      return
-    }
-    const cacheNames = await caches.keys()
-    for (const name of cacheNames) {
-      const cache = await caches.open(name)
-      const requests = await cache.keys()
-      for (const req of requests) {
-        const url = req.url
-        let id: ModelId | null = null
-        for (const [mid, cfg] of Object.entries(MODELS) as Array<[ModelId, typeof MODELS[ModelId]]>) {
-          if (url.includes(cfg.hfModelId)) {
-            id = mid
-            break
-          }
-        }
-        if (!id) continue
-        const resp = await cache.match(req)
-        if (!resp) continue
-        try {
-          const blob = await resp.blob()
-          next[id].isCached = true
-          next[id].bytes += blob.size
-        } catch (e) {
-          log.warn('blob() failed for cached entry:', url, e)
-        }
-      }
-    }
+    cacheBreakdown = await computeCacheBreakdown(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      typeof caches !== 'undefined' ? (caches as any) : undefined
+    )
+    log.debug('cacheBreakdown updated:', cacheBreakdown)
   } catch (e) {
     log.error('recomputeCacheBreakdown failed:', e)
   }
-  cacheBreakdown = next
-  log.debug('cacheBreakdown updated:', cacheBreakdown)
 }
 
 // Compute once at startup so the popup's first poll has accurate data.
@@ -297,16 +263,9 @@ chrome.runtime.onMessage.addListener(
       void clearAllCaches().then(() => recomputeCacheBreakdown())
       break
     case 'internal:set-settings': {
-      const next: UserSettings = { ...userSettings }
-      if (typeof message.temperature === 'number' && Number.isFinite(message.temperature)) {
-        next.temperature = Math.max(0, Math.min(2, message.temperature))
-      }
-      if (typeof message.maxNewTokens === 'number' && Number.isFinite(message.maxNewTokens)) {
-        next.maxNewTokens = Math.max(1, Math.min(8192, Math.round(message.maxNewTokens)))
-      }
-      userSettings = next
-      void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
-      log.info('User settings updated:', next)
+      userSettings = clampSettings(message, userSettings)
+      void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: userSettings })
+      log.info('User settings updated:', userSettings)
       break
     }
   }

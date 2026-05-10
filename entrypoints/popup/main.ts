@@ -234,11 +234,19 @@ els.errorDismiss.addEventListener('click', () => {
   els.errorToast.hidden = true
 })
 
-// Settings: mark an input dirty while typing, commit on blur or Enter.
-// The dirty flag stops the next poll from yanking the value out from
-// under the user mid-type.
+// Settings: mark an input dirty while typing, commit on blur, Enter, OR
+// after a 500ms typing pause. The pause-commit catches the case where
+// the user types a value and closes the popup without ever blurring —
+// without it, the change was silently lost. The dirty flag still stops
+// the next poll from yanking the value mid-type.
+const debounceTimers = new WeakMap<HTMLInputElement, number>()
 function commitSettings(input: HTMLInputElement): void {
   dirtyInputs.delete(input)
+  const existing = debounceTimers.get(input)
+  if (existing != null) {
+    window.clearTimeout(existing)
+    debounceTimers.delete(input)
+  }
   const temperature = Number.parseFloat(els.tempInput.value)
   const maxNewTokens = Number.parseInt(els.maxTokensInput.value, 10)
   void sendInternal({
@@ -248,8 +256,21 @@ function commitSettings(input: HTMLInputElement): void {
   })
 }
 
+function scheduleDebouncedCommit(input: HTMLInputElement): void {
+  const existing = debounceTimers.get(input)
+  if (existing != null) window.clearTimeout(existing)
+  const id = window.setTimeout(() => {
+    debounceTimers.delete(input)
+    commitSettings(input)
+  }, 500)
+  debounceTimers.set(input, id)
+}
+
 for (const input of [els.tempInput, els.maxTokensInput]) {
-  input.addEventListener('input', () => dirtyInputs.add(input))
+  input.addEventListener('input', () => {
+    dirtyInputs.add(input)
+    scheduleDebouncedCommit(input)
+  })
   input.addEventListener('blur', () => commitSettings(input))
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
