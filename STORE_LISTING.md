@@ -89,7 +89,7 @@ WebGPU is required for the model to run at usable speed. In Manifest V3, service
 
 ### `storage`
 ```
-The extension uses chrome.storage to persist the user's last-selected model id (gemma-4-e2b vs e4b) so it can auto-load on subsequent extension wake-ups. Model file bytes (the ~3 GB Gemma weights) are cached separately by the browser's Cache API via the @huggingface/transformers library — chrome.storage is only used for small key/value preferences (a few hundred bytes).
+The extension uses chrome.storage to persist the user's last-selected model id and inference defaults (temperature, max tokens) so it can auto-load on subsequent extension wake-ups. Model file bytes (the ~3 GB Gemma weights) are cached separately by the browser's Cache API via the @huggingface/transformers library — chrome.storage is only used for small key/value preferences (a few hundred bytes).
 ```
 
 ### `externally_connectable` (host permissions in manifest)

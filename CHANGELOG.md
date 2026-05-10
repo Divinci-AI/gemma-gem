@@ -1,5 +1,23 @@
 # Changelog
 
+## divinci-bridge fork (Apache-2.0, ongoing)
+
+Substantial rework: stripped the original full-page agent loop +
+content scripts; this fork is a pure LLM transport for chat.divinci.app
+via `chrome.runtime.connect` over an `externally_connectable` port.
+See README for the architecture; STORE_LISTING.md for the CWS draft.
+
+Notable since fork:
+- Stable extension ID via pinned `manifest.key` (`laeebjagghfeepomjhbfohefghonemeo`)
+- Offscreen-document + transformers.js v4.2.0 (pinned exact)
+- Gemma 4 E2B only (E4B removed; shape supports N models for re-add)
+- HF revision SHA pin, CSP unchanged from upstream
+- Toolbar popup: status + cache mgmt + inference defaults
+- Multi-tab fairness queue (per-caller depth scoping)
+- 41 unit tests across chat-host / settings-helpers / cache-breakdown
+
+---
+
 ## 0.2.0 (2026-04-06)
 
 ### Features

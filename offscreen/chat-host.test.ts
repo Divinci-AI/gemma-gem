@@ -199,7 +199,6 @@ describe('ChatHost queue', () => {
     await host.load('gemma-4-e2b')
     expect(host.isLoaded()).toBe(true)
     expect(host.isLoaded('gemma-4-e2b')).toBe(true)
-    expect(host.isLoaded('gemma-4-e4b')).toBe(false)
   })
 
   it('dispose() clears state — subsequent chat() throws', async () => {
@@ -251,23 +250,29 @@ describe('ChatHost queue', () => {
     expect(host.getLastError()).toContain('simulated network failure')
   })
 
-  it('concurrent load of a DIFFERENT model rejects with a clear error', async () => {
+  it('concurrent load of the SAME model joins the in-flight load (no double-fetch)', async () => {
     // Slow the first load so the second arrives while it's still in-flight.
     const transformers = await import('@huggingface/transformers')
     let resolveSlow!: () => void
+    let fromPretrainedCalls = 0
     vi.spyOn(transformers.AutoModelForCausalLM, 'from_pretrained').mockImplementationOnce(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (() => new Promise((res) => { resolveSlow = () => res({ generate: vi.fn(), dispose: vi.fn() }) })) as any
+      (() => {
+        fromPretrainedCalls += 1
+        return new Promise((res) => {
+          resolveSlow = () => res({ generate: vi.fn(), dispose: vi.fn() })
+        })
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      }) as any
     )
 
     const host = new ChatHost()
     const firstLoad = host.load('gemma-4-e2b')
-    // Microtask: now in-flight on E2B. Second load asks for E4B.
-    await expect(host.load('gemma-4-e4b')).rejects.toThrow(
-      'Already loading gemma-4-e2b; wait for it or unload first'
-    )
+    const secondLoad = host.load('gemma-4-e2b')
     resolveSlow()
-    await firstLoad
+    await Promise.all([firstLoad, secondLoad])
+    // Should have only triggered one underlying download even though
+    // two callers asked for the same model concurrently.
+    expect(fromPretrainedCalls).toBe(1)
   })
 
   it('dispose() during in-flight load discards the late result (Bug 2 regression)', async () => {

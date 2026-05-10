@@ -15,7 +15,6 @@ export type CacheBreakdown = Record<ModelId, { isCached: boolean; bytes: number 
 export function emptyBreakdown(): CacheBreakdown {
   return {
     'gemma-4-e2b': { isCached: false, bytes: 0 },
-    'gemma-4-e4b': { isCached: false, bytes: 0 },
   }
 }
 

@@ -6,7 +6,7 @@ Chrome extension that hosts Google's Gemma 4 in an offscreen document so [chat.d
 
 - **One offscreen document** holds the model in WebGPU memory. Loads ~3 GB once per browser profile, stays resident across tabs and across service-worker evictions.
 - **External port bridge** (`chrome.runtime.connect`) accepts inference requests from a small allowlist of Divinci origins (`chat.divinci.app`, staging, dev). All other sites are rejected by the manifest's `externally_connectable` and re-checked at runtime.
-- **Toolbar popup** — clicking the extension icon opens a small management UI: shows the loaded model, disk used, queue depth, live download progress, and Load/Unload buttons for E2B / E4B.
+- **Toolbar popup** — clicking the extension icon opens a small management UI: shows the loaded model, disk used, queue depth, live download progress, and Load/Unload buttons.
 
 ## What it isn't
 
@@ -86,15 +86,15 @@ Toolbar icon click ─────►  popup/index.html  ─────►  int
 
 ## Hardware requirements
 
-| | Gemma 4 E2B | Gemma 4 E4B |
-|---|---|---|
-| **One-time download** | ~2.9 GB (q4f16) | ~4.6 GB (q4f16) |
-| **GPU memory** | ~4 GB | ~6 GB |
-| **System RAM** | 8 GB+ | 12 GB+ |
-| **Browser** | Chrome / Edge / Brave 113+ with WebGPU | Same |
-| **GPU feature** | `shader-f16` required | Same |
+| | Gemma 4 E2B |
+|---|---|
+| **One-time download** | ~2.9 GB (q4f16) |
+| **GPU memory** | ~4 GB |
+| **System RAM** | 8 GB+ |
+| **Browser** | Chrome / Edge / Brave 113+ with WebGPU |
+| **GPU feature** | `shader-f16` required |
 
-E4B is defined in `shared/models.ts` and selectable from the popup, but is hidden from chat.divinci.app's picker until the web-app capability probe gains a stronger gate.
+The shape of `shared/models.ts` supports N models — to add a second variant, extend the `ModelId` union, add an entry to `MODELS`, add a card to `entrypoints/popup/index.html`, and surface it in chat.divinci.app's `AVAILABLE_MODELS` picker. Every layer downstream (cache breakdown, queue, popup status) iterates `MODELS` so the new variant is picked up automatically.
 
 ## Development
 

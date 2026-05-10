@@ -49,13 +49,10 @@ describe('modelIdForUrl', () => {
     ).toBe('gemma-4-e2b')
   })
 
-  it('matches E4B URLs', () => {
+  it('returns null for unknown URLs (other models, unrelated origins)', () => {
     expect(
-      modelIdForUrl('https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX/resolve/main/onnx/embed.onnx_data')
-    ).toBe('gemma-4-e4b')
-  })
-
-  it('returns null for unknown URLs', () => {
+      modelIdForUrl('https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX/resolve/main/file')
+    ).toBeNull()
     expect(modelIdForUrl('https://huggingface.co/some-other-model/file.onnx')).toBeNull()
     expect(modelIdForUrl('https://example.com/random.txt')).toBeNull()
   })
@@ -82,41 +79,39 @@ describe('computeCacheBreakdown', () => {
     })
     const result = await computeCacheBreakdown(cachesApi)
     expect(result['gemma-4-e2b']).toEqual({ isCached: true, bytes: 2_900_000_000 })
-    expect(result['gemma-4-e4b']).toEqual({ isCached: false, bytes: 0 })
   })
 
-  it('handles mixed E2B + E4B entries across multiple cache stores', async () => {
+  it('aggregates across multiple cache stores', async () => {
     const cachesApi = makeMockCachesApi({
       'transformers-cache': {
         entries: [
           { url: 'https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX/resolve/main/file1', contentLength: 100 },
-          { url: 'https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX/resolve/main/file1', contentLength: 200 },
         ],
       },
       'other-cache': {
         entries: [
-          { url: 'https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX/resolve/main/file2', contentLength: 300 },
+          { url: 'https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX/resolve/main/file2', contentLength: 200 },
         ],
       },
     })
     const result = await computeCacheBreakdown(cachesApi)
-    expect(result['gemma-4-e2b']).toEqual({ isCached: true, bytes: 100 })
-    expect(result['gemma-4-e4b']).toEqual({ isCached: true, bytes: 500 })
+    expect(result['gemma-4-e2b']).toEqual({ isCached: true, bytes: 300 })
   })
 
-  it('ignores entries that do not match any model', async () => {
+  it('ignores entries that do not match any model (including other Gemma variants)', async () => {
     const cachesApi = makeMockCachesApi({
       'misc': {
         entries: [
           { url: 'https://example.com/random.json', contentLength: 9999 },
           { url: 'https://huggingface.co/some-unrelated-model/file', contentLength: 8888 },
+          // E4B URLs are NOT bucketed — we only ship E2B today.
+          { url: 'https://huggingface.co/onnx-community/gemma-4-E4B-it-ONNX/resolve/main/file', contentLength: 7777 },
           { url: 'https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX/resolve/main/keep', contentLength: 100 },
         ],
       },
     })
     const result = await computeCacheBreakdown(cachesApi)
     expect(result['gemma-4-e2b'].bytes).toBe(100)
-    expect(result['gemma-4-e4b'].bytes).toBe(0)
   })
 
   it('falls back to blob().size when Content-Length is missing', async () => {
