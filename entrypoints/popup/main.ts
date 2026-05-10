@@ -23,6 +23,7 @@ const els = {
   statusModel: document.getElementById('status-model')!,
   statusQueue: document.getElementById('status-queue')!,
   statusDisk: document.getElementById('status-disk')!,
+  clearCacheBtn: document.getElementById('clear-cache-btn') as HTMLButtonElement,
   statusProgress: document.getElementById('status-progress')!,
   progressFile: document.getElementById('progress-file')!,
   progressPct: document.getElementById('progress-pct')!,
@@ -203,18 +204,42 @@ async function refreshStorageEstimate(): Promise<void> {
   try {
     if (typeof navigator.storage?.estimate !== 'function') {
       els.statusDisk.textContent = 'unavailable'
+      els.clearCacheBtn.hidden = true
       return
     }
     const est = await navigator.storage.estimate()
     if (est.usage == null) {
       els.statusDisk.textContent = 'unknown'
+      els.clearCacheBtn.hidden = true
       return
     }
     els.statusDisk.textContent = formatBytes(est.usage)
+    // Show the Clear button only when there's something appreciable to
+    // clear (skip noise from <1 MB of chrome.storage entries).
+    els.clearCacheBtn.hidden = est.usage < 1024 * 1024
   } catch {
     els.statusDisk.textContent = 'unknown'
+    els.clearCacheBtn.hidden = true
   }
 }
+
+els.clearCacheBtn.addEventListener('click', async () => {
+  // Confirm — this is destructive (forces a re-download).
+  const ok = window.confirm(
+    'Clear the cached model files?\n\nFuture loads will re-download them from Hugging Face.'
+  )
+  if (!ok) return
+  els.clearCacheBtn.disabled = true
+  els.clearCacheBtn.textContent = 'Clearing…'
+  void sendInternal({ type: 'internal:clear-cache' })
+  // Cache deletion runs in the offscreen; estimate updates over the
+  // next second or two as the entries are removed.
+  setTimeout(() => {
+    els.clearCacheBtn.disabled = false
+    els.clearCacheBtn.textContent = 'Clear'
+    void refreshStorageEstimate()
+  }, 1500)
+})
 
 // Initial paint + steady poll while popup is open
 void poll()

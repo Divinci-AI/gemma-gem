@@ -55,6 +55,25 @@ header h1 {
   color: #e8e8ec;
 }
 
+.inline-action {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  color: #ff8a8a;
+  border: 1px solid #4a3a3a;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.inline-action:hover { background: #2a1a1a; }
+
+.inline-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .status-progress {
   margin-top: 8px;
 }

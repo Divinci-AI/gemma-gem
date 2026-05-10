@@ -200,7 +200,33 @@ chrome.runtime.onMessage.addListener(
     case 'internal:unload':
       void host.dispose().catch((e) => log.error('unload failed:', e))
       break
+    case 'internal:clear-cache':
+      void clearAllCaches()
+      break
   }
 })
+
+/**
+ * Wipe every Cache API entry owned by this extension origin. transformers.js
+ * stores model weights here on first load; without this the user has to
+ * clear extension site data via chrome://extensions to reclaim disk.
+ *
+ * Run from the offscreen document because that's the context that owns
+ * the cache entries (same as where transformers.js writes them).
+ */
+async function clearAllCaches(): Promise<void> {
+  try {
+    if (typeof caches === 'undefined') {
+      log.warn('caches API not available; skipping clear')
+      return
+    }
+    const keys = await caches.keys()
+    log.info(`Clearing ${keys.length} Cache API store(s):`, keys)
+    await Promise.all(keys.map((k) => caches.delete(k)))
+    log.info('Cache cleared')
+  } catch (e) {
+    log.error('Cache clear failed:', e)
+  }
+}
 
 log.info('Divinci offscreen ready')

@@ -187,11 +187,21 @@ export interface InternalStatusResponse {
 /**
  * Same-origin unload request from the popup. Drops the model from VRAM.
  * Doesn't clear the on-disk Cache API entries — model bytes survive for
- * the next load. To reclaim disk, the user clears the extension's site
- * data via chrome://extensions.
+ * the next load. To reclaim disk, send InternalClearCacheRequest.
  */
 export interface InternalUnloadRequest {
   type: 'internal:unload'
+}
+
+/**
+ * Same-origin disk-cache wipe from the popup. Iterates caches.keys()
+ * inside the offscreen document and deletes every entry the extension
+ * owns — chiefly the ~3 GB of model weights transformers.js cached on
+ * first load. Surviving an unload is by-design; this clears the bytes
+ * so a future load re-downloads from HuggingFace.
+ */
+export interface InternalClearCacheRequest {
+  type: 'internal:clear-cache'
 }
 
 export type InternalRequest =
@@ -200,6 +210,7 @@ export type InternalRequest =
   | InternalAbortRequest
   | InternalStatusRequest
   | InternalUnloadRequest
+  | InternalClearCacheRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {
