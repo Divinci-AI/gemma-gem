@@ -21,6 +21,7 @@ import {
   env,
 } from '@huggingface/transformers'
 import { MODELS, type ModelId } from '@/shared/models'
+import type { ChatTool } from '@/shared/messages'
 import { log } from '@/shared/logger'
 
 // Self-host the ONNX Runtime WASM files; copied at build time by wxt.config.
@@ -40,6 +41,14 @@ export interface ChatOptions {
   maxNewTokens?: number
   temperature?: number
   topP?: number
+  /**
+   * Optional tool descriptors. Passed to apply_chat_template; templates
+   * that don't reference `tools` (most non-instruct models) silently
+   * ignore the field. Gemma 4's chat template DOES use it — see the
+   * `{%- if tools -%}` branch in tokenizer_config.json. Output parsing
+   * is the caller's responsibility (parseToolCalls in tool-call-parser.ts).
+   */
+  tools?: ChatTool[]
 }
 
 export type ChatTokenFn = (delta: string) => void
@@ -256,6 +265,11 @@ export class ChatHost {
         tokenize: true,
         return_tensor: true,
         return_dict: true,
+        // Forward-compatible: templates that don't use `tools` ignore it.
+        // Gemma 4's template renders each tool as a <|tool>declaration:...<tool|>
+        // block in the system turn, then the model can emit
+        // <|tool_call>call:NAME{args}<tool_call|> in its output.
+        tools: opts.tools,
       })
 
       const streamer = new TextStreamer(this.tokenizer, {

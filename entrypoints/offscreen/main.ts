@@ -17,6 +17,7 @@ import {
   type CacheBreakdown,
 } from '@/offscreen/cache-breakdown'
 import { clampSettings } from '@/offscreen/settings-helpers'
+import { parseToolCalls } from '@/offscreen/tool-call-parser'
 import { log } from '@/shared/logger'
 import type {
   Message,
@@ -138,14 +139,16 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     return
   }
 
-  // Forward-compatible tool-call surface: the wire accepts `tools`, but
-  // we don't yet pass it through to apply_chat_template + parse tool-call
-  // output. Warn loudly so a future caller that relies on tool calls
-  // doesn't silently get a tool-less response. Wire-up tracked at
+  // Speculative tool-call wiring: pass the declared tools to
+  // apply_chat_template and parse the model's output. Templates that
+  // don't reference `tools` ignore it; Gemma 4 IS one that uses it
+  // (its tokenizer_config.json includes the {%- if tools -%} branch).
+  // Web app does not yet round-trip the parsed toolCalls; we surface
+  // them best-effort so the wire is exercised end-to-end. See
   // project_browser_llm_emerging_standards.md.
   if (req.tools && req.tools.length > 0) {
-    log.warn(
-      `divinci:chat received ${req.tools.length} tool(s); not yet wired to the model — running plain chat`
+    log.info(
+      `divinci:chat forwarding ${req.tools.length} tool(s) to apply_chat_template`
     )
   }
 
@@ -185,6 +188,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
         maxNewTokens: req.maxNewTokens ?? userSettings.maxNewTokens,
         temperature: req.temperature ?? userSettings.temperature,
         topP: req.topP,
+        tools: req.tools,
       },
       (delta) => {
         if (state.aborted) return
@@ -199,12 +203,19 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     if (state.aborted) {
       emit(req.caller, { type: 'divinci:aborted', requestId: req.requestId })
     } else {
+      // Best-effort tool-call extraction. Empty array on plain chat (and
+      // the field is omitted on the wire by chat-done's optional shape),
+      // so callers that don't care pay no cost.
+      const toolCalls = req.tools && req.tools.length > 0
+        ? parseToolCalls(result.fullText, req.tools, req.requestId)
+        : []
       emit(req.caller, {
         type: 'divinci:chat-done',
         requestId: req.requestId,
         fullText: result.fullText,
         tokensGenerated: result.tokensGenerated,
         durationMs: result.durationMs,
+        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
       })
     }
   } catch (err) {
