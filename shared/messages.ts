@@ -182,6 +182,30 @@ export interface InternalStatusResponse {
    * or on dispose. Popup uses this to render an error toast.
    */
   lastError: string | null
+  /**
+   * Per-model breakdown of cached bytes on disk. `bytes` is the sum of
+   * Cache API blob sizes whose URLs match the model's HF repo. `isCached`
+   * is true when bytes > 0 — i.e. a future load() will be fast (cache
+   * hit) rather than re-downloading. Populated lazily by the offscreen
+   * (recomputed after load-done and clear-cache events).
+   */
+  cacheBreakdown: Record<ModelId, { isCached: boolean; bytes: number }>
+  /** Current user-configurable defaults; web-app params override these per-call. */
+  settings: {
+    temperature: number
+    maxNewTokens: number
+  }
+}
+
+/**
+ * Same-origin: persist user-configurable inference defaults. Applied at
+ * the offscreen handleChat layer as fallbacks when the web-app doesn't
+ * pass a value (web-app per-call value always wins).
+ */
+export interface InternalSetSettingsRequest {
+  type: 'internal:set-settings'
+  temperature?: number
+  maxNewTokens?: number
 }
 
 /**
@@ -211,6 +235,7 @@ export type InternalRequest =
   | InternalStatusRequest
   | InternalUnloadRequest
   | InternalClearCacheRequest
+  | InternalSetSettingsRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {

@@ -35,7 +35,15 @@ const els = {
   version: document.getElementById('version')!,
   cards: document.querySelectorAll<HTMLElement>('.model-card'),
   loadButtons: document.querySelectorAll<HTMLButtonElement>('button[data-action="load"]'),
+  cacheBadges: document.querySelectorAll<HTMLElement>('[data-cache-badge]'),
+  cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
+  tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
+  maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
 }
+
+// Track which inputs the user has touched so we don't fight their typing
+// when the next status poll comes in. Cleared on commit (blur).
+const dirtyInputs = new Set<HTMLInputElement>()
 
 /** Local override that hides the toast for an error the user dismissed. */
 let dismissedError: string | null = null
@@ -107,7 +115,41 @@ function render(status: InternalStatusResponse | null): void {
 
   els.unloadBtn.hidden = !status.isLoaded
   renderCards(status.currentModelId, status.loadingModelId)
+  renderCacheState(status.cacheBreakdown)
   renderError(status.lastError)
+  renderSettings(status.settings)
+}
+
+function renderCacheState(
+  breakdown: Record<ModelId, { isCached: boolean; bytes: number }>
+): void {
+  els.cacheBadges.forEach((el) => {
+    const id = el.dataset.cacheBadge as ModelId | undefined
+    if (!id) return
+    el.hidden = !breakdown[id]?.isCached
+  })
+  els.cacheDetails.forEach((el) => {
+    const id = el.dataset.cacheDetail as ModelId | undefined
+    if (!id) return
+    const entry = breakdown[id]
+    if (entry?.isCached) {
+      el.classList.add('is-cached')
+      el.textContent = `cached (${formatBytes(entry.bytes)}, fast load)`
+    } else {
+      el.classList.remove('is-cached')
+      el.textContent = 'not cached — first load downloads'
+    }
+  })
+}
+
+function renderSettings(settings: { temperature: number; maxNewTokens: number }): void {
+  // Don't overwrite an input the user is currently editing.
+  if (!dirtyInputs.has(els.tempInput)) {
+    els.tempInput.value = String(settings.temperature)
+  }
+  if (!dirtyInputs.has(els.maxTokensInput)) {
+    els.maxTokensInput.value = String(settings.maxNewTokens)
+  }
 }
 
 function renderCards(loadedId: ModelId | null, loadingId: ModelId | null): void {
@@ -191,6 +233,30 @@ els.errorDismiss.addEventListener('click', () => {
   dismissedError = els.errorText.textContent
   els.errorToast.hidden = true
 })
+
+// Settings: mark an input dirty while typing, commit on blur or Enter.
+// The dirty flag stops the next poll from yanking the value out from
+// under the user mid-type.
+function commitSettings(input: HTMLInputElement): void {
+  dirtyInputs.delete(input)
+  const temperature = Number.parseFloat(els.tempInput.value)
+  const maxNewTokens = Number.parseInt(els.maxTokensInput.value, 10)
+  void sendInternal({
+    type: 'internal:set-settings',
+    temperature: Number.isFinite(temperature) ? temperature : undefined,
+    maxNewTokens: Number.isFinite(maxNewTokens) ? maxNewTokens : undefined,
+  })
+}
+
+for (const input of [els.tempInput, els.maxTokensInput]) {
+  input.addEventListener('input', () => dirtyInputs.add(input))
+  input.addEventListener('blur', () => commitSettings(input))
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      input.blur() // triggers blur → commit
+    }
+  })
+}
 
 // Render version from manifest
 const manifest = chrome.runtime.getManifest()

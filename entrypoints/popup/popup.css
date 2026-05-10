@@ -192,7 +192,9 @@ header h1 {
 .error-dismiss:hover { opacity: 1; }
 
 .model-meta strong {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 13px;
   color: #e8e8ec;
 }
@@ -200,6 +202,84 @@ header h1 {
 .model-size {
   font-size: 11px;
   color: #8b91a7;
+}
+
+.cache-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #1a3a2a;
+  color: #7fdba4;
+  border: 1px solid #2a5a3a;
+  border-radius: 3px;
+}
+
+.cache-badge[hidden] { display: none; }
+
+.model-cache-detail {
+  color: #8b91a7;
+}
+
+.model-cache-detail.is-cached {
+  color: #7fdba4;
+}
+
+#settings {
+  border-top: 1px solid #1f2230;
+  padding: 4px 12px;
+}
+
+#settings details {
+  font-size: 12px;
+}
+
+#settings summary {
+  cursor: pointer;
+  padding: 6px 4px;
+  color: #8b91a7;
+  user-select: none;
+}
+
+#settings summary:hover { color: #e8e8ec; }
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 4px;
+  gap: 8px;
+}
+
+.setting-row label {
+  font-size: 12px;
+  color: #e8e8ec;
+}
+
+.setting-row input[type='number'] {
+  width: 80px;
+  padding: 4px 6px;
+  background: #0f1117;
+  border: 1px solid #2a2e3e;
+  border-radius: 4px;
+  color: #e8e8ec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  text-align: right;
+}
+
+.setting-row input[type='number']:focus {
+  outline: none;
+  border-color: #4f7df0;
+}
+
+.setting-note {
+  margin: 6px 4px 4px;
+  font-size: 11px;
+  color: #6a708a;
+  font-style: italic;
 }
 
 .model-action,

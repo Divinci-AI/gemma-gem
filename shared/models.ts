@@ -56,6 +56,24 @@ export const MODELS: Record<ModelId, ModelConfig> = {
 
 export const DEFAULT_MODEL_ID: ModelId = 'gemma-4-e2b'
 export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
+export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
+
+/**
+ * User-configurable inference defaults. Set via the popup, applied by
+ * the offscreen handleChat layer ONLY when the web-app request didn't
+ * pass an explicit value (per-call params always override these).
+ */
+export interface UserSettings {
+  /** 0 = greedy / deterministic. >0 enables sampling. */
+  temperature: number
+  /** Hard cap on tokens per generation. */
+  maxNewTokens: number
+}
+
+export const DEFAULT_SETTINGS: UserSettings = {
+  temperature: 0,
+  maxNewTokens: 512,
+}
 
 /**
  * Web app origins allowed to talk to this extension via

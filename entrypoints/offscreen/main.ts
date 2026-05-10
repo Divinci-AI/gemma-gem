@@ -18,11 +18,40 @@ import type {
   InternalLoadRequest,
   InternalChatRequest,
   InternalAbortRequest,
+  InternalSetSettingsRequest,
   InternalStatusResponse,
   DivinciExternalEvent,
 } from '@/shared/messages'
+import {
+  MODELS,
+  STORAGE_KEY_SETTINGS,
+  DEFAULT_SETTINGS,
+  type ModelId,
+  type UserSettings,
+} from '@/shared/models'
 
 const host = new ChatHost()
+
+// Per-model cached-bytes breakdown. Recomputed after load-done and on
+// clear-cache (via recomputeCacheBreakdown()). Read out of getStatus().
+let cacheBreakdown: Record<ModelId, { isCached: boolean; bytes: number }> = {
+  'gemma-4-e2b': { isCached: false, bytes: 0 },
+  'gemma-4-e4b': { isCached: false, bytes: 0 },
+}
+
+// User-configurable inference defaults. Loaded from chrome.storage on
+// startup, applied as fallbacks in handleChat when the web-app didn't
+// pass an explicit value. Per-call params from chat.divinci.app always
+// override these.
+let userSettings: UserSettings = { ...DEFAULT_SETTINGS }
+
+void chrome.storage.local.get(STORAGE_KEY_SETTINGS).then((stored) => {
+  const saved = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
+  if (saved) {
+    userSettings = { ...DEFAULT_SETTINGS, ...saved }
+    log.info('Loaded user settings:', userSettings)
+  }
+})
 
 // All chats currently in the system: queued (waiting on ChatHost.chatQueueTail)
 // and running (head of the queue). Keyed by `${caller}::${requestId}` so
@@ -45,6 +74,61 @@ function emit(caller: string, event: DivinciExternalEvent): void {
   })
 }
 
+/**
+ * Iterate every Cache API store this extension owns and group bytes
+ * by model id. Each Cache entry is a fully-qualified HF URL — we
+ * pattern-match the model's hfRepo to bucket the entry, then sum the
+ * blob sizes to get per-model disk usage.
+ *
+ * O(n) over all cache entries × one blob() per entry. For 50 files at
+ * ~50 MB each that's ~50 micro-fetches; cheap enough to run after every
+ * load-done and clear-cache. NOT run from the regular status poll.
+ */
+async function recomputeCacheBreakdown(): Promise<void> {
+  const next: Record<ModelId, { isCached: boolean; bytes: number }> = {
+    'gemma-4-e2b': { isCached: false, bytes: 0 },
+    'gemma-4-e4b': { isCached: false, bytes: 0 },
+  }
+  try {
+    if (typeof caches === 'undefined') {
+      cacheBreakdown = next
+      return
+    }
+    const cacheNames = await caches.keys()
+    for (const name of cacheNames) {
+      const cache = await caches.open(name)
+      const requests = await cache.keys()
+      for (const req of requests) {
+        const url = req.url
+        let id: ModelId | null = null
+        for (const [mid, cfg] of Object.entries(MODELS) as Array<[ModelId, typeof MODELS[ModelId]]>) {
+          if (url.includes(cfg.hfModelId)) {
+            id = mid
+            break
+          }
+        }
+        if (!id) continue
+        const resp = await cache.match(req)
+        if (!resp) continue
+        try {
+          const blob = await resp.blob()
+          next[id].isCached = true
+          next[id].bytes += blob.size
+        } catch (e) {
+          log.warn('blob() failed for cached entry:', url, e)
+        }
+      }
+    }
+  } catch (e) {
+    log.error('recomputeCacheBreakdown failed:', e)
+  }
+  cacheBreakdown = next
+  log.debug('cacheBreakdown updated:', cacheBreakdown)
+}
+
+// Compute once at startup so the popup's first poll has accurate data.
+void recomputeCacheBreakdown()
+
 async function handleLoad(req: InternalLoadRequest): Promise<void> {
   const start = Date.now()
   try {
@@ -58,6 +142,10 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
         currentFile: info.currentFile,
       })
     })
+    // After a successful load, the model's bytes are now in Cache API
+    // (transformers.js wrote them during the fetch). Refresh the
+    // breakdown so the popup reflects the new on-disk state.
+    void recomputeCacheBreakdown()
     emit(req.caller, {
       type: 'divinci:load-done',
       requestId: req.requestId,
@@ -114,8 +202,11 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     const result = await host.chat(
       {
         messages: req.messages,
-        maxNewTokens: req.maxNewTokens,
-        temperature: req.temperature,
+        // User-configurable defaults via the popup are fallbacks; per-call
+        // params from chat.divinci.app override. ?? short-circuits only on
+        // null/undefined (so explicit 0 still wins over the user default).
+        maxNewTokens: req.maxNewTokens ?? userSettings.maxNewTokens,
+        temperature: req.temperature ?? userSettings.temperature,
         topP: req.topP,
       },
       (delta) => {
@@ -193,6 +284,8 @@ chrome.runtime.onMessage.addListener(
         queueDepth: host.getQueueDepth(),
         loadProgress: host.getLatestProgress(),
         lastError: host.getLastError(),
+        cacheBreakdown,
+        settings: { ...userSettings },
       }
       sendResponse(resp)
       return true
@@ -201,8 +294,21 @@ chrome.runtime.onMessage.addListener(
       void host.dispose().catch((e) => log.error('unload failed:', e))
       break
     case 'internal:clear-cache':
-      void clearAllCaches()
+      void clearAllCaches().then(() => recomputeCacheBreakdown())
       break
+    case 'internal:set-settings': {
+      const next: UserSettings = { ...userSettings }
+      if (typeof message.temperature === 'number' && Number.isFinite(message.temperature)) {
+        next.temperature = Math.max(0, Math.min(2, message.temperature))
+      }
+      if (typeof message.maxNewTokens === 'number' && Number.isFinite(message.maxNewTokens)) {
+        next.maxNewTokens = Math.max(1, Math.min(8192, Math.round(message.maxNewTokens)))
+      }
+      userSettings = next
+      void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
+      log.info('User settings updated:', next)
+      break
+    }
   }
 })
 
