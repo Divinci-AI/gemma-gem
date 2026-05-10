@@ -138,6 +138,17 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     return
   }
 
+  // Forward-compatible tool-call surface: the wire accepts `tools`, but
+  // we don't yet pass it through to apply_chat_template + parse tool-call
+  // output. Warn loudly so a future caller that relies on tool calls
+  // doesn't silently get a tool-less response. Wire-up tracked at
+  // project_browser_llm_emerging_standards.md.
+  if (req.tools && req.tools.length > 0) {
+    log.warn(
+      `divinci:chat received ${req.tools.length} tool(s); not yet wired to the model — running plain chat`
+    )
+  }
+
   const state: ChatState = { caller: req.caller, requestId: req.requestId, aborted: false }
   const key = chatKey(req.caller, req.requestId)
 

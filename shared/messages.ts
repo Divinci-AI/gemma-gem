@@ -40,6 +40,28 @@ export interface DivinciExternalLoadRequest {
   modelId: ModelId
 }
 
+/**
+ * Forward-compatible tool descriptor for agent-style chats. Roughly
+ * matches the OpenAI / Anthropic / Hermes tool-call shape; intentionally
+ * loose (parameters is JSON-schema-typed) so the wire absorbs WebMCP and
+ * other emerging standards without protocol churn. Today the extension
+ * accepts the field but logs a warning rather than passing it through to
+ * apply_chat_template — wiring tool execution end-to-end requires the
+ * web app to also handle tool-call rounds, which is not yet done.
+ */
+export interface ChatTool {
+  name: string
+  description?: string
+  /** JSON-Schema-shaped parameter spec. */
+  parameters?: Record<string, unknown>
+}
+
+export interface ChatToolCall {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+}
+
 export interface DivinciExternalChatRequest {
   type: 'divinci:chat'
   requestId: string
@@ -50,6 +72,15 @@ export interface DivinciExternalChatRequest {
   /** Sampling temperature; 0 disables. */
   temperature?: number
   topP?: number
+  /**
+   * Optional tool descriptors the model is allowed to call. Forward-
+   * compatible with WebMCP / OpenAI / Anthropic / Hermes shapes.
+   * Today the extension warns and ignores; wiring through to
+   * transformers.js apply_chat_template + parsing tool-call output is
+   * planned for a future release once the web app supports tool-call
+   * rounds end-to-end.
+   */
+  tools?: ChatTool[]
 }
 
 export interface DivinciExternalAbortRequest {
@@ -103,6 +134,12 @@ export interface DivinciExternalChatDoneEvent {
   fullText: string
   tokensGenerated: number
   durationMs: number
+  /**
+   * Tool calls extracted from the model's output, when the request
+   * carried `tools`. Empty/absent for plain chat. Reserved for the
+   * tool-use rollout — current builds always emit `undefined`.
+   */
+  toolCalls?: ChatToolCall[]
 }
 
 export interface DivinciExternalAbortedEvent {
@@ -146,6 +183,8 @@ export interface InternalChatRequest {
   maxNewTokens?: number
   temperature?: number
   topP?: number
+  /** Forward-compatible field; not yet wired to apply_chat_template. */
+  tools?: ChatTool[]
 }
 
 export interface InternalAbortRequest {

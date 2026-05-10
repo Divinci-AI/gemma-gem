@@ -45,6 +45,16 @@ Click the toolbar icon. You'll see:
 
 Selecting a model via the popup persists in `chrome.storage.local`; on subsequent service-worker startups (browser restart, extension reload, idle eviction) the background auto-warms the remembered model so the first chat is instant.
 
+## Transport vs. tool-runner — architectural boundary
+
+This extension is an **LLM transport** — messages in, tokens out — and intentionally **not a tool runner**. We host the model; we do not host the agent loop. Tool discovery, tool invocation, conversation orchestration, and memory all live in the calling web app (chat.divinci.app today, any future allowed origin tomorrow).
+
+The wire reflects that boundary: `divinci:chat` carries `messages` (and a forward-compatible `tools` field — see below), `divinci:chat-done` returns `fullText` (and a forward-compatible `toolCalls` field). The extension never executes a tool; it only relays them.
+
+When emerging browser-side agent standards land — [WebMCP](https://developer.chrome.com/blog/webmcp-epp), `window.ai` / built-in Gemini Nano, LiteRT-LM — the integration point is the **web app**, not this extension. The web app discovers WebMCP tools from open tabs, includes them in the chat request, executes the tool calls the model emits, and feeds results back. Our `tools` / `toolCalls` wire fields exist now (extension currently warns and ignores) so the wire shape doesn't have to change when that integration ships.
+
+If you ever feel tempted to add tool execution to the offscreen document, stop and reconsider — that couples a generic LLM transport to web-app-specific concerns and breaks the abstraction that makes this extension reusable across origins. Project memory `project_browser_llm_emerging_standards.md` tracks the relevant standards.
+
 ## Architecture
 
 ```

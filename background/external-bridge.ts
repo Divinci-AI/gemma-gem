@@ -102,6 +102,7 @@ async function handleExternalRequest(
         maxNewTokens: req.maxNewTokens,
         temperature: req.temperature,
         topP: req.topP,
+        tools: req.tools,
       }
       chrome.runtime.sendMessage(internal as Message).catch((e) => {
         log.error('Failed to forward chat to offscreen:', e)
