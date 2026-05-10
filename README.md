@@ -1,105 +1,119 @@
-# Gemma Gem
+# Divinci Local Inference
 
-Your personal AI assistant living right inside the browser. Gemma Gem runs Google's Gemma 4 model entirely on-device via WebGPU — no API keys, no cloud, no data leaving your machine. It can read pages, click buttons, fill forms, run JavaScript, and answer questions about any site you visit.
+Chrome extension that hosts Google's Gemma 4 in an offscreen document so [chat.divinci.app](https://chat.divinci.app) can run inference locally on your GPU instead of paying per-token API costs. Forked from [kessler/gemma-gem](https://github.com/kessler/gemma-gem) (Apache-2.0); the original full-page agent loop has been stripped — this fork is purely a transport layer for chat.divinci.app's local-LLM picker option.
 
-## Requirements
+## What it is
 
-- Chrome with WebGPU support
-- ~500MB disk for E2B model, ~1.5GB for E4B (cached after first run)
+- **One offscreen document** holds the model in WebGPU memory. Loads ~3 GB once per browser profile, stays resident across tabs and across service-worker evictions.
+- **External port bridge** (`chrome.runtime.connect`) accepts inference requests from a small allowlist of Divinci origins (`chat.divinci.app`, staging, dev). All other sites are rejected by the manifest's `externally_connectable` and re-checked at runtime.
+- **Toolbar popup** — clicking the extension icon opens a small management UI: shows the loaded model, disk used, queue depth, live download progress, and Load/Unload buttons for E2B / E4B.
 
-## Setup
+## What it isn't
+
+- Not a content script. We don't inject UI into pages, don't read DOM, don't watch your browsing.
+- Not authenticated. The extension only fetches model files from Hugging Face. It cannot make calls to any Divinci API.
+- Not telemetry. No analytics, no remote logs.
+
+## Install (developer / internal alpha)
 
 ```bash
 pnpm install
-pnpm build
+pnpm build:prod
+pnpm zip
+# → .output/divinci-local-inference-0.1.0-chrome.zip
 ```
 
-Load the extension in `chrome://extensions` (developer mode) from `.output/chrome-mv3-dev/`.
+Unzip somewhere stable, then in Brave / Chrome / Edge:
 
-## Usage
+1. `chrome://extensions` → Developer Mode ON
+2. **Load unpacked** → pick the unzipped folder
+3. Confirm the assigned extension ID is `laeebjagghfeepomjhbfohefghonemeo` (it will be — `manifest.key` is pinned for stable identity across team installs)
 
-1. Navigate to any page
-2. Click the gem icon (bottom-right corner) to open the chat
-3. Wait for model to load (progress shown on icon + chat)
-4. Ask questions about the page or request actions
+Then visit [chat.stage.divinci.app](https://chat.stage.divinci.app), open the agent panel, and pick **"Gemma 4 E2B (Local, Free)"** from the model selector. The extension probe will find the bridge automatically.
+
+## The popup
+
+Click the toolbar icon. You'll see:
+
+- **Loaded model** — current state (idle, loading X, or `Gemma 4 E2B`)
+- **Queue depth** — chats waiting to run (0 in solo use)
+- **Disk used** — total bytes the extension is holding via the browser's Cache API
+- **Download progress bar** — file + percent + bytes, only visible while a load is in flight
+- **Per-model "Load" buttons** — the loading card has a spinner; the loaded card shows "Loaded"
+- **"Unload model from GPU"** — drops the model from VRAM (Cache API entries survive for the next load)
+- **Error toast** — surfaces any load failure with a dismiss button; clears on next successful load
+
+Selecting a model via the popup persists in `chrome.storage.local`; on subsequent service-worker startups (browser restart, extension reload, idle eviction) the background auto-warms the remembered model so the first chat is instant.
 
 ## Architecture
 
 ```
-Offscreen Document          Service Worker           Content Script
-(Gemma 4 + Agent Loop)  <-> (Message Router)    <-> (Chat UI + DOM Tools)
-       |                         |
-  WebGPU inference          Screenshot capture
-  Token streaming           JS execution
+            chrome.runtime.connect (port)
+chat.divinci.app  ────────────────────────►  Background SW (external-bridge.ts)
+                                                     │
+                                                     │  internal:* (sendMessage)
+                                                     ▼
+                                              Offscreen document
+                                              (chat-host.ts)
+                                                     │
+                                                     ▼
+                                              transformers.js + WebGPU
+                                              (single ChatHost, serial queue)
+
+Toolbar icon click ─────►  popup/index.html  ─────►  internal:status / internal:load / internal:unload
 ```
 
-- **Offscreen document**: Hosts the model via `@huggingface/transformers` + WebGPU. Runs the agent loop.
-- **Service worker**: Routes messages between content scripts and offscreen document. Handles `take_screenshot` and `run_javascript`.
-- **Content script**: Injects gem icon + shadow DOM chat overlay. Executes DOM tools (`read_page_content`, `click_element`, `type_text`, `scroll_page`).
+| Layer | File |
+|---|---|
+| Background SW (port routing + auto-warm) | `entrypoints/background.ts` |
+| External port bridge (origin allowlist) | `background/external-bridge.ts` |
+| Offscreen launcher | `background/offscreen-manager.ts` |
+| Offscreen entrypoint (request router) | `entrypoints/offscreen/main.ts` |
+| ChatHost (transformers.js + queue) | `offscreen/chat-host.ts` |
+| Popup UI | `entrypoints/popup/index.html` + `popup/main.ts` + `popup/popup.css` |
+| Wire protocol (external + internal) | `shared/messages.ts` |
+| Model registry (pinned HF revisions) | `shared/models.ts` |
 
-## Tools
+## Hardware requirements
 
-| Tool | Description | Runs in |
-|------|-------------|---------|
-| `read_page_content` | Read text/HTML of the page or a CSS selector | Content script |
-| `take_screenshot` | Capture visible page as PNG | Service worker |
-| `click_element` | Click an element by CSS selector | Content script |
-| `type_text` | Type into an input by CSS selector | Content script |
-| `scroll_page` | Scroll up/down by pixel amount | Content script |
-| `run_javascript` | Execute JS in the page context with full DOM access | Service worker |
+| | Gemma 4 E2B | Gemma 4 E4B |
+|---|---|---|
+| **One-time download** | ~2.9 GB (q4f16) | ~4.6 GB (q4f16) |
+| **GPU memory** | ~4 GB | ~6 GB |
+| **System RAM** | 8 GB+ | 12 GB+ |
+| **Browser** | Chrome / Edge / Brave 113+ with WebGPU | Same |
+| **GPU feature** | `shader-f16` required | Same |
 
-## Settings
-
-Click the gear icon in the chat header:
-
-- **Model**: Switch between Gemma 4 E2B (~500MB) and E4B (~1.5GB). Selection persists across sessions.
-- **Thinking**: Toggle native Gemma 4 thinking
-- **Max iterations**: Cap on tool call loops per request
-- **Clear context**: Reset conversation history for the current page
-- **Disable on this site**: Disable the extension per-hostname (persisted)
+E4B is defined in `shared/models.ts` and selectable from the popup, but is hidden from chat.divinci.app's picker until the web-app capability probe gains a stronger gate.
 
 ## Development
 
 ```bash
-pnpm build              # Development build (with logging, source maps)
-pnpm build:prod         # Production build (logging silenced, minified)
+pnpm dev           # WXT dev mode — hot reloads on file change. Manifest also includes localhost:8080.
+pnpm build         # Development build (logging on, source maps)
+pnpm build:prod    # Production build (logging silenced, optimized)
+pnpm zip           # Pack .output/chrome-mv3 into a distributable .zip
+pnpm test          # Run the ChatHost unit tests
+pnpm compile       # tsc --noEmit (no emit, type-check only)
 ```
 
-## Tech Stack
+The production manifest only allows `chat.{,stage.,dev.}divinci.app` origins. Localhost is dev-mode-only — see `wxt.config.ts` for the security rationale (any random :8080 service would otherwise be able to consume the user's GPU).
 
-- [WXT](https://wxt.dev) — Chrome extension framework (Vite-based)
-- [@huggingface/transformers](https://github.com/huggingface/transformers.js) — Browser ML inference
-- [marked](https://github.com/markedjs/marked) — Markdown rendering in chat
-- Gemma 4 E2B / E4B (`onnx-community/gemma-4-E2B-it-ONNX`, `onnx-community/gemma-4-E4B-it-ONNX`) — q4f16 quantization, 128K context
+## Tests
 
-## Debugging
+`offscreen/chat-host.test.ts` — 12 unit tests covering the queue + abort + error invariants. transformers.js + chrome.runtime are mocked at the module boundary so tests run in plain node (no WebGPU, no WASM).
 
-All logs are prefixed with `[Gemma Gem]`. In development builds, info/debug/warn logs are active. Production builds only log errors.
+```bash
+pnpm test                # one-shot
+pnpm test:watch          # interactive
+```
 
-- **Service worker logs**: `chrome://extensions` → Gemma Gem → "Inspect views: service worker"
-- **Offscreen document logs**: `chrome://extensions` → Gemma Gem → "Inspect views: offscreen.html"
-- **Content script logs**: Open DevTools on any page → Console
-- **All extension pages**: `chrome://inspect#other` lists all inspectable extension contexts (service worker, offscreen document, etc.)
+## Pinned dependencies (deliberate)
 
-The offscreen document logs are the most useful — they show model loading, prompt construction, token counts, raw model output, and tool execution.
+- `@huggingface/transformers` is pinned to **`4.2.0` exactly** (no caret) so future minor/patch releases don't silently roll into the bundle. Bumping requires a deliberate edit + re-test.
+- `MODELS[id].revision` in `shared/models.ts` pins the **exact Hugging Face commit SHA** for each model so we get the bytes we tested against, never whatever HEAD happens to be at fetch time. To upgrade, fetch the new SHA from `https://huggingface.co/api/models/<hfRepo>` and bump the spec's `version` field to bust user-side caches.
+- `manifest.key` (in `wxt.config.ts`) pins the **deterministic extension ID** `laeebjagghfeepomjhbfohefghonemeo`. Every machine that loads the unpacked / signs the .crx with the matching private key gets that same ID. The web-app probe hardcodes this value.
 
-## Hardware Requirements (WebGPU)
+## Chrome Web Store
 
-> Estimated minimal requirements (not benchmarked on real devices)
-
-| | E2B (~500 MB) | E4B (~1.5 GB) |
-|---|---|---|
-| **GPU VRAM / Shared Memory** | 4 GB | 6 GB |
-| **System RAM** | 6-8 GB | 8-16 GB |
-| **Browser** | Chrome 113+ / Edge 113+ with WebGPU | Same |
-| **GPU Feature** | `shader-f16` required | Same |
-
-- **Integrated GPUs**: Intel Xe (Arc), Apple M1+, Qualcomm Adreno work with sufficient shared memory
-- **Discrete GPUs**: Any with 4 GB+ VRAM (e.g. GTX 1650, RX 6500 XT)
-- **Mobile**: iPhone A14+, Snapdragon 8 Gen 1+ (slow)
-- **Performance**: Slow on integrated GPUs, normal on mid-range discrete GPUs, fast on high-end GPUs
-- At long contexts (128K), KV cache adds 10-20% memory overhead on top of model weights
-
-![Gemma Gem in action](screenshot.png)
-![Gemma Gem in action](screenshot2.jpg)
-
+A submission-ready listing draft lives in `STORE_LISTING.md`: copy/paste-ready text for every CWS form field, plus permission justifications for the privacy review. The actual submission requires a CWS developer account + the $5 fee + a public privacy-policy URL — not automated.

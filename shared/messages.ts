@@ -166,6 +166,8 @@ export interface InternalStatusRequest {
 export interface InternalStatusResponse {
   type: 'internal:status-response'
   currentModelId: ModelId | null
+  /** Model id of the in-flight load, if any. null when not loading. */
+  loadingModelId: ModelId | null
   isLoaded: boolean
   queueDepth: number
   /** Currently downloading file path + bytes (when not idle), for the popup. */
@@ -175,6 +177,11 @@ export interface InternalStatusResponse {
     bytesTotal: number | null
     currentFile?: string
   } | null
+  /**
+   * Last load error message, or null. Cleared on next successful load
+   * or on dispose. Popup uses this to render an error toast.
+   */
+  lastError: string | null
 }
 
 /**

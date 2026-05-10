@@ -212,4 +212,106 @@ describe('ChatHost queue', () => {
       host.chat({ messages: [{ role: 'user', content: '' }] }, () => undefined)
     ).rejects.toThrow('Model not loaded')
   })
+
+  // -------- Newer popup-related invariants --------
+
+  it('latestProgress clears after a successful load', async () => {
+    const host = new ChatHost()
+    let captured: unknown = undefined
+    await host.load('gemma-4-e2b', (info) => {
+      captured = info
+    })
+    // Note: the mocked from_pretrained doesn't actually fire progress
+    // events (we don't simulate a real download here), so latestProgress
+    // never set in the first place — but the contract is "null after
+    // success", regardless of whether the inner stream fired.
+    expect(host.getLatestProgress()).toBeNull()
+    void captured
+  })
+
+  it('latestProgress clears after a FAILED load (Bug 1 regression)', async () => {
+    // Force model load to throw mid-stream after a progress event hits.
+    const transformers = await import('@huggingface/transformers')
+    vi.spyOn(transformers.AutoModelForCausalLM, 'from_pretrained').mockImplementationOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      async (_repo: any, opts: any) => {
+        // Simulate a progress event landing first…
+        opts.progress_callback?.({ status: 'progress', loaded: 100, total: 1000, progress: 10, file: 'foo.onnx_data' })
+        // …then the load throws.
+        throw new Error('simulated network failure mid-load')
+      }
+    )
+
+    const host = new ChatHost()
+    await expect(host.load('gemma-4-e2b')).rejects.toThrow('simulated network failure mid-load')
+    // Bug 1: previously latestProgress kept its last value after a thrown
+    // load, so the popup showed a frozen progress bar forever.
+    expect(host.getLatestProgress()).toBeNull()
+    // lastError is populated for the popup error toast.
+    expect(host.getLastError()).toContain('simulated network failure')
+  })
+
+  it('concurrent load of a DIFFERENT model rejects with a clear error', async () => {
+    // Slow the first load so the second arrives while it's still in-flight.
+    const transformers = await import('@huggingface/transformers')
+    let resolveSlow!: () => void
+    vi.spyOn(transformers.AutoModelForCausalLM, 'from_pretrained').mockImplementationOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => new Promise((res) => { resolveSlow = () => res({ generate: vi.fn(), dispose: vi.fn() }) })) as any
+    )
+
+    const host = new ChatHost()
+    const firstLoad = host.load('gemma-4-e2b')
+    // Microtask: now in-flight on E2B. Second load asks for E4B.
+    await expect(host.load('gemma-4-e4b')).rejects.toThrow(
+      'Already loading gemma-4-e2b; wait for it or unload first'
+    )
+    resolveSlow()
+    await firstLoad
+  })
+
+  it('dispose() during in-flight load discards the late result (Bug 2 regression)', async () => {
+    // Slow the model load so we can call dispose() while it's pending.
+    const transformers = await import('@huggingface/transformers')
+    let resolveLoad!: () => void
+    const fakeNewModel = { generate: vi.fn(), dispose: vi.fn() }
+    vi.spyOn(transformers.AutoModelForCausalLM, 'from_pretrained').mockImplementationOnce(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (() => new Promise((res) => { resolveLoad = () => res(fakeNewModel) })) as any
+    )
+
+    const host = new ChatHost()
+    const loadPromise = host.load('gemma-4-e2b')
+    // Now mid-load. Dispose. Then let the load complete.
+    await host.dispose()
+    expect(host.isLoaded()).toBe(false)
+
+    resolveLoad()
+    await loadPromise
+
+    // Bug 2: previously the late from_pretrained result was committed to
+    // model+tokenizer+currentModelId, silently un-disposing the user's
+    // explicit unload. Now generation-check rejects the late result.
+    expect(host.isLoaded()).toBe(false)
+    expect(host.getCurrentModelId()).toBeNull()
+    // The orphaned model.dispose was called so we don't leak its session.
+    expect(fakeNewModel.dispose).toHaveBeenCalled()
+  })
+
+  it('lastError clears at the start of every load() attempt (retry semantics)', async () => {
+    const transformers = await import('@huggingface/transformers')
+    // First call fails…
+    vi.spyOn(transformers.AutoModelForCausalLM, 'from_pretrained')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementationOnce((async () => { throw new Error('first fail') }) as any)
+      // …second succeeds.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .mockImplementationOnce((async () => ({ generate: vi.fn(), dispose: vi.fn() })) as any)
+
+    const host = new ChatHost()
+    await expect(host.load('gemma-4-e2b')).rejects.toThrow('first fail')
+    expect(host.getLastError()).toContain('first fail')
+    await host.load('gemma-4-e2b')
+    expect(host.getLastError()).toBeNull()
+  })
 })

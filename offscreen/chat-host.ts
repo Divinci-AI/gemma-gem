@@ -51,6 +51,23 @@ export class ChatHost {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private tokenizer: any = null
   private loading: Promise<void> | null = null
+  /** Model id of the in-flight load (if any). null when not loading. */
+  private loadingModelId: ModelId | null = null
+  /**
+   * Generation counter that distinguishes "this load is current" from
+   * "this load was superseded by a dispose() call". dispose() bumps it.
+   * After from_pretrained resolves we compare the counter we captured at
+   * load-start against the current value — if they differ, dispose ran
+   * during our load and we discard the result rather than re-installing
+   * the model after the user explicitly asked to unload.
+   */
+  private loadGeneration = 0
+  /**
+   * Last load failure reason. Cleared at the start of every load() and
+   * on successful completion. Surfaced to the popup via the status
+   * response so the UI can render an error toast.
+   */
+  private lastError: string | null = null
   // The transformers.js StoppingCriteria currently steering an active
   // generate() loop. interrupt() it to stop within one token.
   private activeStopper: InstanceType<typeof InterruptableStoppingCriteria> | null = null
@@ -68,12 +85,36 @@ export class ChatHost {
     return modelId == null || modelId === this.currentModelId
   }
 
+  getLoadingModelId(): ModelId | null {
+    return this.loadingModelId
+  }
+
+  getLastError(): string | null {
+    return this.lastError
+  }
+
   async load(modelId: ModelId, onProgress?: LoadProgressFn): Promise<void> {
     if (this.isLoaded(modelId)) return
+    // Concurrent load of a DIFFERENT model is a UX bug if silently joined
+    // to the in-flight one (caller never sees their model load). Reject
+    // with a clear message; popup catches this and shows the error toast.
+    if (this.loading && this.loadingModelId !== modelId) {
+      throw new Error(
+        `Already loading ${this.loadingModelId}; wait for it or unload first`
+      )
+    }
     if (this.loading) return this.loading
-    this.loading = this._load(modelId, onProgress).finally(() => {
-      this.loading = null
-    })
+    this.lastError = null
+    this.loadingModelId = modelId
+    this.loading = this._load(modelId, onProgress)
+      .catch((e) => {
+        this.lastError = (e as Error).message ?? String(e)
+        throw e
+      })
+      .finally(() => {
+        this.loading = null
+        this.loadingModelId = null
+      })
     return this.loading
   }
 
@@ -86,6 +127,9 @@ export class ChatHost {
       await this.dispose()
     }
 
+    // Snapshot the current generation BEFORE awaiting from_pretrained so
+    // we can detect a dispose-during-load race below.
+    const myGeneration = this.loadGeneration
     log.info(`Loading ${modelId} (${config.hfModelId} @ ${config.revision} dtype=${config.dtype})`)
 
     let totalLoaded = 0
@@ -110,25 +154,43 @@ export class ChatHost {
       }
     }
 
-    const [tokenizer, model] = await Promise.all([
-      AutoTokenizer.from_pretrained(config.hfModelId, {
-        revision: config.revision,
-        progress_callback,
-      }),
-      AutoModelForCausalLM.from_pretrained(config.hfModelId, {
-        revision: config.revision,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        dtype: config.dtype as any,
-        device: 'webgpu',
-        progress_callback,
-      }),
-    ])
+    try {
+      const [tokenizer, model] = await Promise.all([
+        AutoTokenizer.from_pretrained(config.hfModelId, {
+          revision: config.revision,
+          progress_callback,
+        }),
+        AutoModelForCausalLM.from_pretrained(config.hfModelId, {
+          revision: config.revision,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          dtype: config.dtype as any,
+          device: 'webgpu',
+          progress_callback,
+        }),
+      ])
 
-    this.tokenizer = tokenizer
-    this.model = model
-    this.currentModelId = modelId
-    this.latestProgress = null // load complete — clear download bar
-    log.info(`Loaded ${modelId}`)
+      // Generation check: dispose() bumps loadGeneration. If it ran while
+      // we were awaiting from_pretrained, the user has explicitly asked
+      // to unload — don't re-install the model state, just dispose the
+      // newly-loaded one and exit. Without this check the dispose silently
+      // gets undone by our late assignments.
+      if (myGeneration !== this.loadGeneration) {
+        log.info(`Load of ${modelId} superseded by dispose; discarding result`)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        try { await (model as any)?.dispose?.() } catch (e) { log.warn('discard-dispose threw', e) }
+        return
+      }
+
+      this.tokenizer = tokenizer
+      this.model = model
+      this.currentModelId = modelId
+      log.info(`Loaded ${modelId}`)
+    } finally {
+      // Clear the download bar regardless of success/failure/supersession.
+      // Bug 1 fix: previously this only ran on success, so a failed load
+      // left the popup showing a frozen "75% downloading…" forever.
+      this.latestProgress = null
+    }
   }
 
   /**
@@ -244,6 +306,10 @@ export class ChatHost {
   }
 
   async dispose(): Promise<void> {
+    // Bump generation FIRST so any in-flight _load (awaiting from_pretrained
+    // right now) sees the change when it resumes and discards its result
+    // instead of re-installing the model state we're about to clear.
+    this.loadGeneration += 1
     if (this.model?.dispose) {
       try {
         await this.model.dispose()
@@ -257,6 +323,8 @@ export class ChatHost {
     this.activeStopper = null
     this.chatQueueTail = Promise.resolve()
     this.pending = 0
+    this.latestProgress = null
+    this.lastError = null
   }
 
   getCurrentModelId(): ModelId | null {

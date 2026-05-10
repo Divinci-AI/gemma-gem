@@ -188,9 +188,11 @@ chrome.runtime.onMessage.addListener(
       const resp: InternalStatusResponse = {
         type: 'internal:status-response',
         currentModelId: host.getCurrentModelId(),
+        loadingModelId: host.getLoadingModelId(),
         isLoaded: host.isLoaded(),
         queueDepth: host.getQueueDepth(),
         loadProgress: host.getLatestProgress(),
+        lastError: host.getLastError(),
       }
       sendResponse(resp)
       return true

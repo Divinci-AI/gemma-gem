@@ -5,29 +5,39 @@
  * directly to the offscreen via chrome.runtime.sendMessage rather than
  * going through the externally_connectable port. We poll status every
  * second while open (cheap; offscreen is local) and dispatch
- * load/unload requests on button click.
+ * load/unload requests on button click. Button state is rendered
+ * deterministically from the status response on each poll — never
+ * mutated optimistically — which avoids the "Loading… → Load →
+ * Loading…" snap-back flicker.
  */
 
 import type {
   InternalRequest,
   InternalStatusResponse,
 } from '@/shared/messages'
-import { MODELS, type ModelId } from '@/shared/models'
+import { MODELS, STORAGE_KEY_MODEL, type ModelId } from '@/shared/models'
 
 const POLL_INTERVAL_MS = 1000
 
 const els = {
   statusModel: document.getElementById('status-model')!,
   statusQueue: document.getElementById('status-queue')!,
+  statusDisk: document.getElementById('status-disk')!,
   statusProgress: document.getElementById('status-progress')!,
   progressFile: document.getElementById('progress-file')!,
   progressPct: document.getElementById('progress-pct')!,
   progressFill: document.getElementById('progress-fill') as HTMLElement,
   unloadBtn: document.getElementById('unload-btn') as HTMLButtonElement,
+  errorToast: document.getElementById('error-toast') as HTMLElement,
+  errorText: document.getElementById('error-text')!,
+  errorDismiss: document.getElementById('error-dismiss') as HTMLButtonElement,
   version: document.getElementById('version')!,
   cards: document.querySelectorAll<HTMLElement>('.model-card'),
   loadButtons: document.querySelectorAll<HTMLButtonElement>('button[data-action="load"]'),
 }
+
+/** Local override that hides the toast for an error the user dismissed. */
+let dismissedError: string | null = null
 
 // One-shot send to the offscreen. The background service worker isn't
 // involved — the offscreen registers a chrome.runtime.onMessage listener
@@ -36,7 +46,6 @@ function sendInternal<T = unknown>(msg: InternalRequest): Promise<T | null> {
   return new Promise((resolve) => {
     try {
       chrome.runtime.sendMessage(msg, (resp: T | undefined) => {
-        // Touch lastError to suppress the "unchecked runtime.lastError" warning.
         const _err = chrome.runtime.lastError
         void _err
         resolve(resp ?? null)
@@ -60,20 +69,25 @@ function render(status: InternalStatusResponse | null): void {
     els.statusQueue.textContent = '0'
     els.statusProgress.hidden = true
     els.unloadBtn.hidden = true
-    setActiveCard(null)
+    renderCards(null, null)
+    renderError(null)
     return
   }
 
-  // Loaded model name (from the MODELS registry)
-  if (status.currentModelId) {
-    const config = MODELS[status.currentModelId]
-    els.statusModel.textContent = config?.label ?? status.currentModelId
+  // "Loaded model" line shows the loaded model OR the loading model OR a
+  // not-loaded placeholder, in priority order.
+  if (status.loadingModelId) {
+    const cfg = MODELS[status.loadingModelId]
+    els.statusModel.textContent = `Loading ${cfg?.label ?? status.loadingModelId}…`
+  } else if (status.currentModelId) {
+    const cfg = MODELS[status.currentModelId]
+    els.statusModel.textContent = cfg?.label ?? status.currentModelId
   } else {
-    els.statusModel.textContent = status.isLoaded ? 'loaded' : 'not loaded'
+    els.statusModel.textContent = 'not loaded'
   }
   els.statusQueue.textContent = String(status.queueDepth)
 
-  // Progress bar (visible only while a load is in flight)
+  // Progress bar mirrors the offscreen's latestProgress snapshot.
   if (status.loadProgress) {
     els.statusProgress.hidden = false
     const file = status.loadProgress.currentFile
@@ -90,25 +104,44 @@ function render(status: InternalStatusResponse | null): void {
     els.statusProgress.hidden = true
   }
 
-  // Unload button only shows when something is actually loaded
   els.unloadBtn.hidden = !status.isLoaded
-  setActiveCard(status.currentModelId)
+  renderCards(status.currentModelId, status.loadingModelId)
+  renderError(status.lastError)
 }
 
-function setActiveCard(modelId: ModelId | null): void {
+function renderCards(loadedId: ModelId | null, loadingId: ModelId | null): void {
   els.cards.forEach((card) => {
     const id = card.dataset.modelId as ModelId | undefined
-    card.classList.toggle('is-active', id != null && id === modelId)
+    if (!id) return
+    const isLoaded = id === loadedId
+    const isLoading = id === loadingId
+    card.classList.toggle('is-active', isLoaded)
+    card.classList.toggle('is-loading', isLoading)
     const btn = card.querySelector<HTMLButtonElement>('button[data-action="load"]')
     if (!btn) return
-    if (id === modelId) {
+    if (isLoading) {
+      btn.textContent = 'Loading…'
+      btn.disabled = true
+    } else if (isLoaded) {
       btn.textContent = 'Loaded'
       btn.disabled = true
     } else {
       btn.textContent = 'Load'
-      btn.disabled = false
+      // Disable while ANY load is in flight — don't let the user trigger
+      // a concurrent load that ChatHost will reject.
+      btn.disabled = loadingId !== null
     }
   })
+}
+
+function renderError(err: string | null): void {
+  // Hide if no error or if the user dismissed this exact message.
+  if (!err || err === dismissedError) {
+    els.errorToast.hidden = true
+    return
+  }
+  els.errorText.textContent = err
+  els.errorToast.hidden = false
 }
 
 async function poll(): Promise<void> {
@@ -120,22 +153,31 @@ els.loadButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     const id = btn.dataset.modelId as ModelId | undefined
     if (!id) return
-    btn.disabled = true
-    btn.textContent = 'Loading…'
+    // Clear any prior dismissed-error gate so a new failure on this load
+    // gets surfaced. Also wipe the local toast immediately for snappy UX —
+    // the next poll will re-render based on actual status.
+    dismissedError = null
+    // Persist the user's choice so the SW auto-warms on next startup.
+    void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: id })
     void sendInternal({
       type: 'internal:load',
       requestId: `popup-load-${Date.now()}`,
       modelId: id,
       caller: 'popup',
     }).then(() => {
-      // Status poll will re-render correctly within the next second.
       void poll()
     })
+    // Also poll immediately so the loadingModelId from the status response
+    // updates the card state without waiting a full second.
+    setTimeout(() => void poll(), 50)
   })
 })
 
 els.unloadBtn.addEventListener('click', () => {
   els.unloadBtn.disabled = true
+  // Drop the remembered model so the SW doesn't auto-warm it back on its
+  // next wake-up (which would silently undo the unload from the user's POV).
+  void chrome.storage.local.remove(STORAGE_KEY_MODEL)
   void sendInternal({ type: 'internal:unload' }).then(() => {
     setTimeout(() => {
       els.unloadBtn.disabled = false
@@ -144,10 +186,41 @@ els.unloadBtn.addEventListener('click', () => {
   })
 })
 
+els.errorDismiss.addEventListener('click', () => {
+  dismissedError = els.errorText.textContent
+  els.errorToast.hidden = true
+})
+
 // Render version from manifest
 const manifest = chrome.runtime.getManifest()
 els.version.textContent = `v${manifest.version}`
 
+// Storage estimate. Scoped to the extension origin — counts the model
+// files cached by transformers.js plus our few-KB chrome.storage entries.
+// navigator.storage.estimate() is broadly supported in Chromium-based
+// browsers; fall back gracefully if not.
+async function refreshStorageEstimate(): Promise<void> {
+  try {
+    if (typeof navigator.storage?.estimate !== 'function') {
+      els.statusDisk.textContent = 'unavailable'
+      return
+    }
+    const est = await navigator.storage.estimate()
+    if (est.usage == null) {
+      els.statusDisk.textContent = 'unknown'
+      return
+    }
+    els.statusDisk.textContent = formatBytes(est.usage)
+  } catch {
+    els.statusDisk.textContent = 'unknown'
+  }
+}
+
 // Initial paint + steady poll while popup is open
 void poll()
+void refreshStorageEstimate()
 setInterval(poll, POLL_INTERVAL_MS)
+// Disk estimate updates less frequently — it only changes when files are
+// actually downloaded/evicted, both of which are infrequent compared to
+// model-state polls.
+setInterval(refreshStorageEstimate, 5_000)

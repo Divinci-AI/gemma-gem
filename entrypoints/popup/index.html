@@ -24,6 +24,10 @@
         <span class="status-label">Queue depth</span>
         <span class="status-value" id="status-queue">—</span>
       </div>
+      <div class="status-row">
+        <span class="status-label">Disk used</span>
+        <span class="status-value" id="status-disk">—</span>
+      </div>
       <div id="status-progress" class="status-progress" hidden>
         <div class="progress-label">
           <span id="progress-file">—</span>
@@ -32,6 +36,11 @@
         <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
       </div>
     </section>
+
+    <div id="error-toast" class="error-toast" hidden>
+      <span id="error-text"></span>
+      <button id="error-dismiss" class="error-dismiss" aria-label="Dismiss">×</button>
+    </div>
 
     <section id="models">
       <div class="model-card" data-model-id="gemma-4-e2b">
