@@ -10,6 +10,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['**/*.test.ts'],
-    exclude: ['node_modules', '.output', '.wxt'],
+    // e2e/ uses Playwright (`*.spec.ts`), not vitest. Keep them out of
+    // the unit-test pool so `pnpm test` doesn't try to run them with
+    // the wrong runner.
+    exclude: ['node_modules', '.output', '.wxt', 'e2e/**'],
   },
 })

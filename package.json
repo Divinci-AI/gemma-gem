@@ -15,9 +15,12 @@
     "compile": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "e2e": "playwright test --config=e2e/playwright.config.ts",
+    "e2e:smoke": "playwright test --config=e2e/playwright.config.ts --project=smoke",
     "postinstall": "wxt prepare"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/chrome": "^0.1.42",
     "typescript": "^5.9.3",
     "vitest": "^4.1.5",
