@@ -26,8 +26,10 @@
       </div>
       <div class="status-row">
         <span class="status-label" title="Model files cached in the browser. Survives Unload — re-loading is fast (no re-download).">Disk cache</span>
-        <span class="status-value" id="status-disk">—</span>
-        <button id="clear-cache-btn" class="inline-action" hidden title="Delete cached model files. Future loads will re-download.">Clear</button>
+        <span class="status-trailing">
+          <span class="status-value" id="status-disk">—</span>
+          <button id="clear-cache-btn" class="inline-action" hidden title="Delete cached model files. Future loads will re-download.">Clear</button>
+        </span>
       </div>
       <div id="status-progress" class="status-progress" hidden>
         <div class="progress-label">
