@@ -29,11 +29,7 @@ import type {
   InternalStatusResponse,
   DivinciExternalEvent,
 } from '@/shared/messages'
-import {
-  STORAGE_KEY_SETTINGS,
-  DEFAULT_SETTINGS,
-  type UserSettings,
-} from '@/shared/models'
+import { DEFAULT_SETTINGS, type UserSettings } from '@/shared/models'
 
 const host = new ChatHost()
 
@@ -41,19 +37,19 @@ const host = new ChatHost()
 // clear-cache (via recomputeCacheBreakdown()). Read out of getStatus().
 let cacheBreakdown: CacheBreakdown = emptyBreakdown()
 
-// User-configurable inference defaults. Loaded from chrome.storage on
-// startup, applied as fallbacks in handleChat when the web-app didn't
-// pass an explicit value. Per-call params from chat.divinci.app always
-// override these.
+// User-configurable inference defaults, applied as fallbacks in handleChat
+// when the web-app didn't pass an explicit value. Per-call params from
+// chat.divinci.app always override these.
+//
+// NOTE: offscreen documents only get `chrome.runtime` — NOT chrome.storage
+// (documented MV3 limitation; touching chrome.storage here throws at init
+// and prevents the onMessage listener below from ever registering, which
+// made the popup show "extension idle" and the Load button do nothing).
+// The SW owns persistence on our behalf: it hydrates these via an
+// internal:set-settings message right after creating the offscreen, and
+// writes popup-driven changes to chrome.storage. We start from defaults
+// until hydrated.
 let userSettings: UserSettings = { ...DEFAULT_SETTINGS }
-
-void chrome.storage.local.get(STORAGE_KEY_SETTINGS).then((stored) => {
-  const saved = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
-  if (saved) {
-    userSettings = { ...DEFAULT_SETTINGS, ...saved }
-    log.info('Loaded user settings:', userSettings)
-  }
-})
 
 // All chats currently in the system: queued (waiting on ChatHost.chatQueueTail)
 // and running (head of the queue). Keyed by `${caller}::${requestId}` so
@@ -286,7 +282,7 @@ chrome.runtime.onMessage.addListener(
       break
     case 'internal:set-settings': {
       userSettings = clampSettings(message, userSettings)
-      void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: userSettings })
+      // Persistence happens in the SW — the offscreen has no chrome.storage.
       log.info('User settings updated:', userSettings)
       break
     }

@@ -18,8 +18,18 @@
 import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
 import { log } from '@/shared/logger'
-import { STORAGE_KEY_MODEL, type ModelId } from '@/shared/models'
-import type { InternalLoadRequest, Message } from '@/shared/messages'
+import {
+  STORAGE_KEY_MODEL,
+  STORAGE_KEY_SETTINGS,
+  DEFAULT_SETTINGS,
+  type ModelId,
+  type UserSettings,
+} from '@/shared/models'
+import type {
+  InternalLoadRequest,
+  InternalSetSettingsRequest,
+  Message,
+} from '@/shared/messages'
 
 async function autoWarmIfRemembered(): Promise<void> {
   try {
@@ -44,12 +54,59 @@ async function autoWarmIfRemembered(): Promise<void> {
   }
 }
 
+/**
+ * Persist inference-default changes on the offscreen's behalf. Offscreen
+ * documents only get chrome.runtime — not chrome.storage — so the popup's
+ * internal:set-settings broadcast (which the offscreen applies in-memory)
+ * is also caught here and written to chrome.storage. Partial updates merge
+ * onto the stored value so one field doesn't clobber the other.
+ */
+function setupSettingsPersistence(): void {
+  chrome.runtime.onMessage.addListener((msg: Message) => {
+    if ((msg as InternalSetSettingsRequest)?.type !== 'internal:set-settings') return
+    const m = msg as InternalSetSettingsRequest
+    void chrome.storage.local.get(STORAGE_KEY_SETTINGS).then((stored) => {
+      const prev = (stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings>) ?? {}
+      const next: UserSettings = {
+        temperature: m.temperature ?? prev.temperature ?? DEFAULT_SETTINGS.temperature,
+        maxNewTokens: m.maxNewTokens ?? prev.maxNewTokens ?? DEFAULT_SETTINGS.maxNewTokens,
+      }
+      void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
+    })
+  })
+}
+
+/**
+ * Push saved inference defaults into the freshly-created offscreen doc.
+ * The offscreen starts from DEFAULT_SETTINGS (it can't read chrome.storage
+ * itself); this hydrates it to the user's last-saved values.
+ */
+async function hydrateOffscreenSettings(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+    const saved = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
+    if (!saved) return
+    const req: InternalSetSettingsRequest = {
+      type: 'internal:set-settings',
+      temperature: saved.temperature,
+      maxNewTokens: saved.maxNewTokens,
+    }
+    chrome.runtime.sendMessage(req as Message).catch((e) => {
+      log.warn('Settings hydrate sendMessage failed:', e)
+    })
+  } catch (e) {
+    log.warn('Settings hydrate read failed:', e)
+  }
+}
+
 export default defineBackground(() => {
   log.info('Divinci local-inference SW started')
   setupExternalBridge()
+  setupSettingsPersistence()
 
   ensureOffscreenDocument()
     .then(() => log.info('Offscreen document ready'))
+    .then(() => hydrateOffscreenSettings())
     .then(() => autoWarmIfRemembered())
     .catch((e) => log.error('Failed to create offscreen document:', e))
 })
