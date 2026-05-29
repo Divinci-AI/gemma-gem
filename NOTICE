@@ -1,0 +1,22 @@
+Divinci Local Inference
+Copyright 2026 Divinci AI
+
+This product is a derivative work of "gemma-gem" by kessler
+(https://github.com/kessler/gemma-gem), licensed under the
+Apache License, Version 2.0.
+
+The original full-page browser-agent loop has been removed. This
+derivative is a transport-only Chrome extension that hosts Google's
+Gemma 4 model in an offscreen document and bridges chrome.runtime
+ports from chat.divinci.app to a single shared on-device model
+instance.
+
+Portions of this software use:
+  - @huggingface/transformers (Apache-2.0)
+  - onnxruntime-web (MIT)
+  - WXT (MIT)
+  - marked (MIT)
+
+Google Gemma 4 model weights are downloaded at runtime from Hugging
+Face and are subject to the Gemma Terms of Use
+(https://ai.google.dev/gemma/terms).
