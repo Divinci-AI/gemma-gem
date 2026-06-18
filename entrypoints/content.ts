@@ -1,0 +1,699 @@
+/**
+ * In-page sidebar content script.
+ *
+ * Injects a launcher button + a slide-in right-hand panel on every web
+ * page so the user can chat with the locally-running Gemma 4 E2B model
+ * from anywhere — not just chat.divinci.app.
+ *
+ * Wiring (mirrors the web-app path, but same-extension):
+ *
+ *   content script ──chrome.runtime.connect('divinci-sidebar')──► SW
+ *        │                                          (internal-bridge)
+ *        │                                                  │
+ *        │ chrome.runtime.sendMessage({internal:status})    ▼
+ *        └────────────────────────────────────────►  Offscreen doc
+ *                                                     (WebGPU + model)
+ *
+ * The panel speaks the SAME DivinciExternal* protocol the web app uses
+ * (divinci:load / divinci:chat / divinci:abort + streamed events). The
+ * header readout (loaded? cached? loading%) comes from one-shot
+ * internal:status queries, exactly like the popup.
+ *
+ * Everything model-derived (tokens) and page-derived (title/url) is
+ * rendered via textContent — never innerHTML — so there's no injection
+ * surface (per the project XSS guidelines: defend at the render boundary).
+ */
+
+import { createShadowRootUi } from 'wxt/utils/content-script-ui/shadow-root'
+import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
+import {
+  MODELS,
+  DEFAULT_MODEL_ID,
+  type ModelId,
+} from '@/shared/models'
+import type {
+  DivinciExternalEvent,
+  DivinciExternalRequest,
+  InternalStatusResponse,
+} from '@/shared/messages'
+
+const MODEL_ID: ModelId = DEFAULT_MODEL_ID
+const STORAGE_KEY_OPEN = 'divinci_sidebar_open'
+const STATUS_POLL_MS = 1500
+
+type ChatRole = 'user' | 'assistant'
+interface ChatMessage {
+  role: ChatRole
+  content: string
+}
+
+export default defineContentScript({
+  matches: ['<all_urls>'],
+  runAt: 'document_idle',
+  // Avoid running inside our own extension pages or obvious non-content
+  // frames. The launcher only makes sense on real web pages.
+  allFrames: false,
+
+  async main(ctx) {
+    const ui = await createShadowRootUi(ctx, {
+      name: 'divinci-local-sidebar',
+      position: 'inline',
+      anchor: 'body',
+      append: 'last',
+      // Keep page hotkeys from firing while the user types in our textarea,
+      // and keep page CSS from leaking in (createIsolatedElement applies an
+      // `all:initial` reset on the host).
+      isolateEvents: true,
+      css: SIDEBAR_CSS,
+      onMount: (container) => mountSidebar(container, ctx),
+      onRemove: (mounted) => mounted?.dispose(),
+    })
+
+    ui.mount()
+  },
+})
+
+/** Everything the onRemove cleanup needs to tear down. */
+interface MountedSidebar {
+  dispose: () => void
+}
+
+function mountSidebar(
+  container: HTMLElement,
+  ctx: { onInvalidated: (cb: () => void) => void },
+): MountedSidebar {
+  // ---- DOM scaffold -------------------------------------------------------
+  const root = document.createElement('div')
+  root.className = 'dls-root'
+  root.innerHTML = TEMPLATE
+  container.appendChild(root)
+
+  const el = {
+    launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
+    panel: root.querySelector<HTMLElement>('.dls-panel')!,
+    close: root.querySelector<HTMLButtonElement>('.dls-close')!,
+    statusPill: root.querySelector<HTMLElement>('.dls-status-pill')!,
+    loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
+    loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
+    loadHint: root.querySelector<HTMLElement>('.dls-load-hint')!,
+    progress: root.querySelector<HTMLElement>('.dls-progress')!,
+    progressFill: root.querySelector<HTMLElement>('.dls-progress-fill')!,
+    progressText: root.querySelector<HTMLElement>('.dls-progress-text')!,
+    messages: root.querySelector<HTMLElement>('.dls-messages')!,
+    empty: root.querySelector<HTMLElement>('.dls-empty')!,
+    input: root.querySelector<HTMLTextAreaElement>('.dls-input')!,
+    send: root.querySelector<HTMLButtonElement>('.dls-send')!,
+  }
+  el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
+
+  // ---- State --------------------------------------------------------------
+  const history: ChatMessage[] = []
+  let port: chrome.runtime.Port | null = null
+  let isLoaded = false
+  let isLoading = false
+  let activeRequestId: string | null = null
+  let streamingBubble: HTMLElement | null = null
+  let pollTimer: number | null = null
+  let disposed = false
+
+  function newRequestId(): string {
+    return `sidebar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  }
+
+  // ---- Port lifecycle -----------------------------------------------------
+  // Lazily connect on first open so we don't spin the offscreen up on every
+  // page. The port survives until the SW evicts it or the tab closes; if it
+  // drops we transparently reconnect on the next send.
+  function ensurePort(): chrome.runtime.Port {
+    if (port) return port
+    const p = chrome.runtime.connect({ name: SIDEBAR_PORT_NAME })
+    p.onMessage.addListener((msg: DivinciExternalEvent) => onPortEvent(msg))
+    p.onDisconnect.addListener(() => {
+      if (port === p) port = null
+    })
+    port = p
+    return p
+  }
+
+  function send(req: DivinciExternalRequest): void {
+    try {
+      ensurePort().postMessage(req)
+    } catch {
+      // Port died between ensure and post — rebuild once and retry.
+      port = null
+      try {
+        ensurePort().postMessage(req)
+      } catch {
+        showError('Extension background is unavailable. Try reloading the page.')
+      }
+    }
+  }
+
+  // ---- Status (one-shot, like the popup) ----------------------------------
+  function queryStatus(): void {
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'internal:status' },
+        (resp: InternalStatusResponse | undefined) => {
+          void chrome.runtime.lastError // swallow "no receiver" during SW spin-up
+          if (resp) applyStatus(resp)
+        },
+      )
+    } catch {
+      /* extension context gone; ctx.onInvalidated will tear us down */
+    }
+  }
+
+  function applyStatus(status: InternalStatusResponse): void {
+    isLoading = status.loadingModelId != null
+    isLoaded = status.isLoaded && status.currentModelId === MODEL_ID
+
+    if (isLoading && status.loadProgress) {
+      const { bytesLoaded, bytesTotal } = status.loadProgress
+      renderProgress(bytesLoaded, bytesTotal)
+    }
+    renderModelState()
+  }
+
+  // ---- Port event handling ------------------------------------------------
+  function onPortEvent(ev: DivinciExternalEvent): void {
+    switch (ev.type) {
+      case 'divinci:pong':
+        return
+      case 'divinci:load-progress':
+        isLoading = true
+        renderProgress(ev.bytesLoaded, ev.bytesTotal)
+        renderModelState()
+        return
+      case 'divinci:load-done':
+        isLoading = false
+        isLoaded = true
+        renderModelState()
+        return
+      case 'divinci:queued':
+        if (streamingBubble) streamingBubble.textContent = `Queued (#${ev.position})…`
+        return
+      case 'divinci:chat-token':
+        if (ev.requestId !== activeRequestId || !streamingBubble) return
+        if (streamingBubble.dataset.placeholder) {
+          streamingBubble.textContent = ''
+          delete streamingBubble.dataset.placeholder
+        }
+        streamingBubble.textContent = (streamingBubble.textContent ?? '') + ev.delta
+        scrollToBottom()
+        return
+      case 'divinci:chat-done':
+        if (ev.requestId !== activeRequestId) return
+        if (streamingBubble) {
+          if (streamingBubble.dataset.placeholder) {
+            // No tokens streamed (e.g. empty generation) — fall back to fullText.
+            streamingBubble.textContent = ev.fullText || '(no response)'
+            delete streamingBubble.dataset.placeholder
+          }
+          history.push({ role: 'assistant', content: streamingBubble.textContent ?? '' })
+        }
+        finishGeneration()
+        return
+      case 'divinci:aborted':
+        if (ev.requestId !== activeRequestId) return
+        if (streamingBubble && streamingBubble.dataset.placeholder) {
+          streamingBubble.textContent = '(stopped)'
+        } else if (streamingBubble) {
+          history.push({ role: 'assistant', content: streamingBubble.textContent ?? '' })
+        }
+        finishGeneration()
+        return
+      case 'divinci:error':
+        if (ev.requestId && ev.requestId !== activeRequestId) {
+          showError(ev.message)
+          return
+        }
+        if (streamingBubble) {
+          streamingBubble.classList.add('dls-bubble-error')
+          streamingBubble.textContent = `Error: ${ev.message}`
+          delete streamingBubble.dataset.placeholder
+        } else {
+          showError(ev.message)
+        }
+        if (ev.fatal) isLoaded = false
+        finishGeneration()
+        renderModelState()
+        return
+    }
+  }
+
+  // ---- Actions ------------------------------------------------------------
+  function loadModel(): void {
+    isLoading = true
+    renderModelState()
+    send({ type: 'divinci:load', requestId: newRequestId(), modelId: MODEL_ID })
+  }
+
+  function sendChat(): void {
+    const text = el.input.value.trim()
+    if (!text || activeRequestId) return
+    if (!isLoaded) {
+      // First message before load — kick the load and let the user retry once
+      // it's ready (clearer than silently queueing a chat that'll error).
+      loadModel()
+      return
+    }
+
+    el.input.value = ''
+    autosize()
+    el.empty.hidden = true
+
+    history.push({ role: 'user', content: text })
+    appendBubble('user', text)
+
+    streamingBubble = appendBubble('assistant', '…')
+    streamingBubble.dataset.placeholder = '1'
+
+    activeRequestId = newRequestId()
+    renderSendButton()
+
+    send({
+      type: 'divinci:chat',
+      requestId: activeRequestId,
+      modelId: MODEL_ID,
+      messages: buildPromptMessages(),
+    })
+    scrollToBottom()
+  }
+
+  function stopChat(): void {
+    if (!activeRequestId) return
+    send({ type: 'divinci:abort', requestId: activeRequestId })
+  }
+
+  function finishGeneration(): void {
+    activeRequestId = null
+    streamingBubble = null
+    renderSendButton()
+    scrollToBottom()
+  }
+
+  /**
+   * Build the message array sent to the model: a small system prompt that
+   * makes the assistant aware of the page the user is on (local inference,
+   * so no privacy cost), followed by the running conversation.
+   */
+  function buildPromptMessages(): Array<{ role: 'system' | ChatRole; content: string }> {
+    const sys =
+      'You are Divinci, a concise, helpful AI assistant running locally in the ' +
+      `user's browser via WebGPU. The user is currently viewing the page ` +
+      `"${document.title}" (${location.href}). Use that as context only when relevant.`
+    return [{ role: 'system', content: sys }, ...history]
+  }
+
+  // ---- Rendering ----------------------------------------------------------
+  function appendBubble(role: ChatRole, text: string): HTMLElement {
+    const bubble = document.createElement('div')
+    bubble.className = `dls-bubble dls-bubble-${role}`
+    bubble.textContent = text
+    el.messages.appendChild(bubble)
+    scrollToBottom()
+    return bubble
+  }
+
+  function renderProgress(loaded: number, total: number | null): void {
+    el.progress.hidden = false
+    const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : null
+    el.progressFill.style.width = pct != null ? `${pct}%` : '15%'
+    el.progressText.textContent =
+      pct != null
+        ? `Downloading model — ${pct}% (${fmtBytes(loaded)} / ${fmtBytes(total)})`
+        : `Downloading model — ${fmtBytes(loaded)}`
+  }
+
+  function renderModelState(): void {
+    if (isLoaded) {
+      el.statusPill.textContent = 'Ready'
+      el.statusPill.dataset.state = 'ready'
+      el.loadCard.hidden = true
+      el.progress.hidden = true
+      el.input.disabled = false
+      el.input.placeholder = 'Message Gemma 4…'
+    } else if (isLoading) {
+      el.statusPill.textContent = 'Loading'
+      el.statusPill.dataset.state = 'loading'
+      el.loadCard.hidden = false
+      el.loadBtn.disabled = true
+      el.loadBtn.textContent = 'Loading…'
+      el.input.disabled = true
+      el.input.placeholder = 'Model loading…'
+    } else {
+      el.statusPill.textContent = 'Idle'
+      el.statusPill.dataset.state = 'idle'
+      el.loadCard.hidden = false
+      el.progress.hidden = true
+      el.loadBtn.disabled = false
+      el.loadBtn.textContent = `Load ${MODELS[MODEL_ID].label}`
+      el.input.disabled = true
+      el.input.placeholder = 'Load the model to start chatting'
+    }
+    renderSendButton()
+  }
+
+  function renderSendButton(): void {
+    if (activeRequestId) {
+      el.send.textContent = 'Stop'
+      el.send.dataset.mode = 'stop'
+      el.send.disabled = false
+    } else {
+      el.send.textContent = 'Send'
+      el.send.dataset.mode = 'send'
+      el.send.disabled = !isLoaded
+    }
+  }
+
+  function showError(message: string): void {
+    const bubble = appendBubble('assistant', `⚠ ${message}`)
+    bubble.classList.add('dls-bubble-error')
+  }
+
+  function scrollToBottom(): void {
+    el.messages.scrollTop = el.messages.scrollHeight
+  }
+
+  function autosize(): void {
+    el.input.style.height = 'auto'
+    el.input.style.height = `${Math.min(el.input.scrollHeight, 140)}px`
+  }
+
+  // ---- Open/close ---------------------------------------------------------
+  function setOpen(open: boolean, persist = true): void {
+    root.classList.toggle('dls-open', open)
+    el.launcher.setAttribute('aria-expanded', String(open))
+    if (open) {
+      ensurePort()
+      send({ type: 'divinci:ping' }) // exercise the fresh connection
+      queryStatus()
+      startPolling()
+      setTimeout(() => el.input.focus(), 60)
+    } else {
+      stopPolling()
+    }
+    if (persist) void chrome.storage.local.set({ [STORAGE_KEY_OPEN]: open })
+  }
+
+  function startPolling(): void {
+    if (pollTimer != null) return
+    pollTimer = window.setInterval(queryStatus, STATUS_POLL_MS)
+  }
+  function stopPolling(): void {
+    if (pollTimer != null) {
+      window.clearInterval(pollTimer)
+      pollTimer = null
+    }
+  }
+
+  // ---- Wire events --------------------------------------------------------
+  el.launcher.addEventListener('click', () => setOpen(!root.classList.contains('dls-open')))
+  el.close.addEventListener('click', () => setOpen(false))
+  el.loadBtn.addEventListener('click', loadModel)
+  el.send.addEventListener('click', () => (activeRequestId ? stopChat() : sendChat()))
+  el.input.addEventListener('input', autosize)
+  el.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendChat()
+    }
+  })
+
+  // Sync open-state across tabs/popup when toggled elsewhere.
+  const storageListener = (
+    changes: Record<string, chrome.storage.StorageChange>,
+    area: string,
+  ): void => {
+    if (area !== 'local' || !(STORAGE_KEY_OPEN in changes)) return
+    const open = changes[STORAGE_KEY_OPEN].newValue === true
+    if (open !== root.classList.contains('dls-open')) setOpen(open, false)
+  }
+  chrome.storage.onChanged.addListener(storageListener)
+
+  // ---- Initial paint ------------------------------------------------------
+  renderModelState()
+  void chrome.storage.local.get(STORAGE_KEY_OPEN).then((stored) => {
+    if (disposed) return
+    if (stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
+  })
+
+  return {
+    dispose: () => {
+      disposed = true
+      stopPolling()
+      try {
+        chrome.storage.onChanged.removeListener(storageListener)
+      } catch {
+        /* context already gone */
+      }
+      try {
+        port?.disconnect()
+      } catch {
+        /* already closed */
+      }
+      port = null
+    },
+  }
+}
+
+// ---- helpers ----------------------------------------------------------------
+
+function fmtBytes(bytes: number | null | undefined): string {
+  if (bytes == null) return '—'
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(0)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+// ---- markup + styles --------------------------------------------------------
+
+const TEMPLATE = /* html */ `
+  <button class="dls-launcher" aria-label="Open Divinci local chat" aria-expanded="false" title="Chat with Gemma 4 (local)">
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path fill="currentColor" d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/>
+    </svg>
+  </button>
+
+  <aside class="dls-panel" role="dialog" aria-label="Divinci local chat">
+    <header class="dls-header">
+      <div class="dls-title">
+        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+          <path fill="currentColor" d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/>
+        </svg>
+        <span>Divinci Local</span>
+        <span class="dls-status-pill" data-state="idle">Idle</span>
+      </div>
+      <button class="dls-close" aria-label="Close">×</button>
+    </header>
+
+    <div class="dls-load-card">
+      <button class="dls-load-btn">Load model</button>
+      <p class="dls-load-hint"></p>
+      <div class="dls-progress" hidden>
+        <div class="dls-progress-track"><div class="dls-progress-fill"></div></div>
+        <p class="dls-progress-text"></p>
+      </div>
+    </div>
+
+    <div class="dls-messages">
+      <p class="dls-empty">Ask Gemma 4 anything — it runs entirely on your GPU, on any page.</p>
+    </div>
+
+    <footer class="dls-footer">
+      <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
+      <button class="dls-send" data-mode="send" disabled>Send</button>
+    </footer>
+  </aside>
+`
+
+const SIDEBAR_CSS = /* css */ `
+  .dls-root {
+    --dls-bg: #0f1117;
+    --dls-bg-2: #161924;
+    --dls-border: #1f2230;
+    --dls-text: #e8e8ec;
+    --dls-muted: #8b91a7;
+    --dls-accent: #5865f2;
+    --dls-accent-hover: #6b77f5;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 14px;
+    color: var(--dls-text);
+  }
+  .dls-root * { box-sizing: border-box; }
+
+  .dls-launcher {
+    position: fixed;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 2147483646;
+    width: 40px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--dls-accent);
+    color: #fff;
+    border: none;
+    border-radius: 10px 0 0 10px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+    transition: background 0.15s ease, right 0.25s ease;
+  }
+  .dls-launcher:hover { background: var(--dls-accent-hover); }
+  .dls-root.dls-open .dls-launcher { right: 380px; }
+
+  .dls-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    height: 100vh;
+    width: 380px;
+    max-width: 92vw;
+    z-index: 2147483645;
+    display: flex;
+    flex-direction: column;
+    background: var(--dls-bg);
+    border-left: 1px solid var(--dls-border);
+    box-shadow: -8px 0 32px rgba(0,0,0,0.4);
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+  }
+  .dls-root.dls-open .dls-panel { transform: translateX(0); }
+
+  .dls-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--dls-border);
+  }
+  .dls-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .dls-title > svg { color: var(--dls-accent); }
+  .dls-status-pill {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    color: var(--dls-muted);
+  }
+  .dls-status-pill[data-state="ready"] { color: #7ee2a8; border-color: #2c4636; }
+  .dls-status-pill[data-state="loading"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-close {
+    background: transparent;
+    border: none;
+    color: var(--dls-muted);
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px;
+  }
+  .dls-close:hover { color: var(--dls-text); }
+
+  .dls-load-card {
+    padding: 14px;
+    border-bottom: 1px solid var(--dls-border);
+  }
+  .dls-load-btn {
+    width: 100%;
+    padding: 9px 12px;
+    background: var(--dls-accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .dls-load-btn:hover:not(:disabled) { background: var(--dls-accent-hover); }
+  .dls-load-btn:disabled { opacity: 0.6; cursor: default; }
+  .dls-load-hint { margin: 8px 0 0; font-size: 12px; color: var(--dls-muted); }
+
+  .dls-progress { margin-top: 10px; }
+  .dls-progress-track {
+    height: 6px;
+    background: var(--dls-bg-2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .dls-progress-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--dls-accent);
+    transition: width 0.2s ease;
+  }
+  .dls-progress-text { margin: 6px 0 0; font-size: 11px; color: var(--dls-muted); }
+
+  .dls-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; }
+
+  .dls-bubble {
+    max-width: 88%;
+    padding: 9px 12px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .dls-bubble-user {
+    align-self: flex-end;
+    background: var(--dls-accent);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .dls-bubble-assistant {
+    align-self: flex-start;
+    background: var(--dls-bg-2);
+    color: var(--dls-text);
+    border: 1px solid var(--dls-border);
+    border-bottom-left-radius: 4px;
+  }
+  .dls-bubble-error { color: #ff9b9b; border-color: #4a3a3a; }
+
+  .dls-footer {
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    padding: 10px 12px;
+    border-top: 1px solid var(--dls-border);
+  }
+  .dls-input {
+    flex: 1;
+    resize: none;
+    background: var(--dls-bg-2);
+    color: var(--dls-text);
+    border: 1px solid var(--dls-border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 13px;
+    font-family: inherit;
+    line-height: 1.4;
+    max-height: 140px;
+  }
+  .dls-input:focus { outline: none; border-color: var(--dls-accent); }
+  .dls-input:disabled { opacity: 0.6; }
+  .dls-send {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--dls-accent);
+    color: #fff;
+  }
+  .dls-send:hover:not(:disabled) { background: var(--dls-accent-hover); }
+  .dls-send:disabled { opacity: 0.5; cursor: default; }
+  .dls-send[data-mode="stop"] { background: #c0453f; }
+`

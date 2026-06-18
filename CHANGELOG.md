@@ -8,6 +8,12 @@ via `chrome.runtime.connect` over an `externally_connectable` port.
 See README for the architecture; STORE_LISTING.md for the CWS draft.
 
 Notable since fork:
+- In-page sidebar: a launcher + slide-in right-hand panel injected on
+  every page (`entrypoints/content.ts`, shadow-DOM isolated) to chat with
+  Gemma 4 E2B anywhere — not just chat.divinci.app. Talks to the offscreen
+  model through a same-extension `internal-bridge` (`onConnect`, no origin
+  gate) that shares the external bridge's request-translation via
+  `port-router.ts`. Open-state persists across tabs via chrome.storage.
 - Stable extension ID via pinned `manifest.key` (`laeebjagghfeepomjhbfohefghonemeo`)
 - Offscreen-document + transformers.js v4.2.0 (pinned exact)
 - Gemma 4 E2B only (E4B removed; shape supports N models for re-add)

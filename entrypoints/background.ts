@@ -17,6 +17,7 @@
 
 import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
+import { setupInternalBridge } from '@/background/internal-bridge'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -102,6 +103,7 @@ async function hydrateOffscreenSettings(): Promise<void> {
 export default defineBackground(() => {
   log.info('Divinci local-inference SW started')
   setupExternalBridge()
+  setupInternalBridge()
   setupSettingsPersistence()
 
   ensureOffscreenDocument()

@@ -18,15 +18,14 @@
  * "Another generation is in progress".
  */
 
-import { ensureOffscreenDocument } from './offscreen-manager'
 import { ALLOWED_WEB_APP_ORIGINS, MODELS } from '@/shared/models'
 import { log } from '@/shared/logger'
+import { forwardRequest, postToPort } from './port-router'
 import type {
   Message,
   InternalRequest,
   InternalEvent,
   DivinciExternalRequest,
-  DivinciExternalEvent,
 } from '@/shared/messages'
 
 interface CallerEntry {
@@ -45,89 +44,6 @@ function newCallerId(origin: string): string {
 function isAllowedOrigin(origin?: string): boolean {
   if (!origin) return false
   return ALLOWED_WEB_APP_ORIGINS.some((allowed) => origin === allowed)
-}
-
-function postToPort(port: chrome.runtime.Port, event: DivinciExternalEvent): void {
-  try {
-    port.postMessage(event)
-  } catch (e) {
-    log.warn('postToPort threw — port likely closed', e)
-  }
-}
-
-async function handleExternalRequest(
-  caller: string,
-  port: chrome.runtime.Port,
-  req: DivinciExternalRequest,
-): Promise<void> {
-  switch (req.type) {
-    case 'divinci:ping': {
-      const manifest = chrome.runtime.getManifest()
-      postToPort(port, {
-        type: 'divinci:pong',
-        extensionVersion: manifest.version,
-        supportedModels: Object.keys(MODELS) as Array<keyof typeof MODELS>,
-      })
-      return
-    }
-
-    case 'divinci:load': {
-      await ensureOffscreenDocument()
-      const internal: InternalRequest = {
-        type: 'internal:load',
-        requestId: req.requestId,
-        modelId: req.modelId,
-        caller,
-      }
-      chrome.runtime.sendMessage(internal as Message).catch((e) => {
-        log.error('Failed to forward load to offscreen:', e)
-        postToPort(port, {
-          type: 'divinci:error',
-          requestId: req.requestId,
-          message: `Failed to forward load: ${(e as Error).message}`,
-          fatal: true,
-        })
-      })
-      return
-    }
-
-    case 'divinci:chat': {
-      await ensureOffscreenDocument()
-      const internal: InternalRequest = {
-        type: 'internal:chat',
-        requestId: req.requestId,
-        modelId: req.modelId,
-        caller,
-        messages: req.messages,
-        maxNewTokens: req.maxNewTokens,
-        temperature: req.temperature,
-        topP: req.topP,
-        tools: req.tools,
-      }
-      chrome.runtime.sendMessage(internal as Message).catch((e) => {
-        log.error('Failed to forward chat to offscreen:', e)
-        postToPort(port, {
-          type: 'divinci:error',
-          requestId: req.requestId,
-          message: `Failed to forward chat: ${(e as Error).message}`,
-          fatal: false,
-        })
-      })
-      return
-    }
-
-    case 'divinci:abort': {
-      const internal: InternalRequest = {
-        type: 'internal:abort',
-        requestId: req.requestId,
-        caller,
-      }
-      chrome.runtime.sendMessage(internal as Message).catch((e) => {
-        log.warn('Failed to forward abort:', e)
-      })
-      return
-    }
-  }
 }
 
 export function setupExternalBridge(): void {
@@ -162,7 +78,7 @@ export function setupExternalBridge(): void {
     log.info('External port connected:', caller)
 
     port.onMessage.addListener((msg: DivinciExternalRequest) => {
-      void handleExternalRequest(caller, port, msg)
+      void forwardRequest(caller, port, msg)
     })
 
     port.onDisconnect.addListener(() => {
