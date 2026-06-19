@@ -14,7 +14,7 @@ import { type UserSettings } from '@/shared/models'
  * UserSettings — does not mutate `current`.
  */
 export function clampSettings(
-  input: { temperature?: unknown; maxNewTokens?: unknown },
+  input: { temperature?: unknown; maxNewTokens?: unknown; cfAccountId?: unknown; cfApiToken?: unknown; braveApiKey?: unknown; serperApiKey?: unknown },
   current: UserSettings
 ): UserSettings {
   const next: UserSettings = { ...current }
@@ -23,6 +23,18 @@ export function clampSettings(
   }
   if (typeof input.maxNewTokens === 'number' && Number.isFinite(input.maxNewTokens)) {
     next.maxNewTokens = Math.max(1, Math.min(8192, Math.round(input.maxNewTokens)))
+  }
+  if (typeof input.cfAccountId === 'string') {
+    next.cfAccountId = input.cfAccountId
+  }
+  if (typeof input.cfApiToken === 'string') {
+    next.cfApiToken = input.cfApiToken
+  }
+  if (typeof input.braveApiKey === 'string') {
+    next.braveApiKey = input.braveApiKey
+  }
+  if (typeof input.serperApiKey === 'string') {
+    next.serperApiKey = input.serperApiKey
   }
   return next
 }

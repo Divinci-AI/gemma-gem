@@ -35,6 +35,7 @@ import type {
   DivinciExternalEvent,
   DivinciExternalRequest,
   InternalStatusResponse,
+  InternalPageCheckResponse,
 } from '@/shared/messages'
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
@@ -93,6 +94,7 @@ function mountSidebar(
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusPill: root.querySelector<HTMLElement>('.dls-status-pill')!,
+    pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
     loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
     loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
     loadHint: root.querySelector<HTMLElement>('.dls-load-hint')!,
@@ -115,6 +117,9 @@ function mountSidebar(
   let streamingBubble: HTMLElement | null = null
   let pollTimer: number | null = null
   let disposed = false
+  let pageStatus: InternalPageCheckResponse['status'] | null = null
+  let lastCheckedUrl = ''
+  let navTimer: number | null = null
 
   function newRequestId(): string {
     return `sidebar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -162,6 +167,87 @@ function mountSidebar(
     } catch {
       /* extension context gone; ctx.onInvalidated will tear us down */
     }
+  }
+
+  // ---- Page indexing status ------------------------------------------------
+  function checkPageStatus(): void {
+    const url = location.href
+    // Skip if we already checked this URL (avoid redundant calls on popstate
+    // that didn't actually change the URL).
+    if (url === lastCheckedUrl) return
+    lastCheckedUrl = url
+
+    el.pagePill.hidden = true
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'internal:check-page', url },
+        (resp: InternalPageCheckResponse | undefined) => {
+          void chrome.runtime.lastError
+          if (resp) applyPageStatus(resp)
+        },
+      )
+    } catch {
+      /* extension context gone */
+    }
+  }
+
+  function applyPageStatus(resp: InternalPageCheckResponse): void {
+    pageStatus = resp.status
+    renderPageStatus()
+  }
+
+  function renderPageStatus(): void {
+    if (!pageStatus || pageStatus === 'not-configured') {
+      el.pagePill.hidden = true
+      return
+    }
+    el.pagePill.hidden = false
+    switch (pageStatus) {
+      case 'indexed':
+        el.pagePill.textContent = 'Indexed'
+        el.pagePill.dataset.state = 'indexed'
+        break
+      case 'triggered':
+        el.pagePill.textContent = 'Indexing…'
+        el.pagePill.dataset.state = 'triggered'
+        break
+      case 'checking':
+        el.pagePill.textContent = 'Checking…'
+        el.pagePill.dataset.state = 'checking'
+        break
+      case 'error':
+        el.pagePill.textContent = 'Error'
+        el.pagePill.dataset.state = 'error'
+        break
+    }
+  }
+
+  function setupNavigationDetection(): void {
+    // Check on initial page load
+    checkPageStatus()
+
+    // SPA navigation: popstate (back/forward)
+    window.addEventListener('popstate', onNavChange)
+
+    // SPA navigation: pushState / replaceState
+    const { pushState: origPushState, replaceState: origReplaceState } = window.history
+    window.history.pushState = function (data: unknown, unused: string, url?: string | URL | null) {
+      origPushState.call(window.history, data, unused, url)
+      onNavChange()
+    }
+    window.history.replaceState = function (data: unknown, unused: string, url?: string | URL | null) {
+      origReplaceState.call(window.history, data, unused, url)
+      onNavChange()
+    }
+  }
+
+  /** Debounced handler to avoid rapid-fire checks during SPA transitions. */
+  function onNavChange(): void {
+    if (navTimer != null) window.clearTimeout(navTimer)
+    navTimer = window.setTimeout(() => {
+      navTimer = null
+      checkPageStatus()
+    }, 300)
   }
 
   function applyStatus(status: InternalStatusResponse): void {
@@ -432,6 +518,9 @@ function mountSidebar(
   }
   chrome.storage.onChanged.addListener(storageListener)
 
+  // ---- Navigation detection ------------------------------------------------
+  setupNavigationDetection()
+
   // ---- Initial paint ------------------------------------------------------
   renderModelState()
   void chrome.storage.local.get(STORAGE_KEY_OPEN).then((stored) => {
@@ -443,6 +532,7 @@ function mountSidebar(
     dispose: () => {
       disposed = true
       stopPolling()
+      if (navTimer != null) window.clearTimeout(navTimer)
       try {
         chrome.storage.onChanged.removeListener(storageListener)
       } catch {
@@ -484,6 +574,7 @@ const TEMPLATE = /* html */ `
         </svg>
         <span>Divinci Local</span>
         <span class="dls-status-pill" data-state="idle">Idle</span>
+        <span class="dls-page-pill" data-state="unknown" hidden></span>
       </div>
       <button class="dls-close" aria-label="Close">×</button>
     </header>
@@ -582,6 +673,20 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-status-pill[data-state="ready"] { color: #7ee2a8; border-color: #2c4636; }
   .dls-status-pill[data-state="loading"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-page-pill {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 1px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    color: var(--dls-muted);
+    margin-left: -4px;
+  }
+  .dls-page-pill[hidden] { display: none; }
+  .dls-page-pill[data-state="indexed"] { color: #7ee2a8; border-color: #2c4636; }
+  .dls-page-pill[data-state="triggered"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-page-pill[data-state="checking"] { color: #8b91a7; border-color: #3a3e50; }
+  .dls-page-pill[data-state="error"] { color: #ff9b9b; border-color: #4a3a3a; }
   .dls-close {
     background: transparent;
     border: none;

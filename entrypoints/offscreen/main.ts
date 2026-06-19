@@ -18,6 +18,7 @@ import {
 } from '@/offscreen/cache-breakdown'
 import { clampSettings } from '@/offscreen/settings-helpers'
 import { parseToolCalls } from '@/offscreen/tool-call-parser'
+import { finalizeChatResult } from '@/offscreen/finalize-chat'
 import { log } from '@/shared/logger'
 import type {
   Message,
@@ -57,10 +58,34 @@ let userSettings: UserSettings = { ...DEFAULT_SETTINGS }
 // The `aborted` flag is read by the streamer callback to suppress token
 // emission, AND read at the start of runChat to short-circuit a queued
 // chat that was aborted before its turn to run.
-type ChatState = { caller: string; requestId: string; aborted: boolean }
+// `kimiAbort` is created lazily when a routed (Kimi) tool loop starts, so a
+// mid-loop abort cancels the in-flight CF/web-search fetches instead of letting
+// the loop run to completion and emit an answer the user already cancelled.
+type ChatState = {
+  caller: string
+  requestId: string
+  aborted: boolean
+  kimiAbort?: AbortController
+}
 const chats = new Map<string, ChatState>()
 function chatKey(caller: string, requestId: string): string {
   return `${caller}::${requestId}`
+}
+
+/**
+ * Render settings for logging with secrets reduced to presence booleans.
+ * The CF API token and Brave/Serper keys must never hit the console — the
+ * offscreen devtools console is readable by anyone with the machine.
+ */
+function redactSettings(s: UserSettings): Record<string, unknown> {
+  return {
+    temperature: s.temperature,
+    maxNewTokens: s.maxNewTokens,
+    hasCfAccountId: Boolean(s.cfAccountId),
+    hasCfApiToken: Boolean(s.cfApiToken),
+    hasBraveApiKey: Boolean(s.braveApiKey),
+    hasSerperApiKey: Boolean(s.serperApiKey),
+  }
 }
 
 function emit(caller: string, event: DivinciExternalEvent): void {
@@ -205,13 +230,51 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       const toolCalls = req.tools && req.tools.length > 0
         ? parseToolCalls(result.fullText, req.tools, req.requestId)
         : []
+
+      // Routing decision + finalization lives in the pure finalizeChatResult
+      // helper (offscreen/finalize-chat.ts) so it's unit-testable without the
+      // chrome/ChatHost stack. Here we just supply the chrome-side deps: the
+      // live abort flag, the tool-status emitter, and the abort registration
+      // (so handleAbort can cancel an in-flight Kimi loop).
+      const finalized = await finalizeChatResult({
+        messages: req.messages,
+        toolCalls,
+        gemma: {
+          fullText: result.fullText,
+          tokensGenerated: result.tokensGenerated,
+          durationMs: result.durationMs,
+        },
+        settings: {
+          cfAccountId: userSettings.cfAccountId,
+          cfApiToken: userSettings.cfApiToken,
+          braveApiKey: userSettings.braveApiKey,
+          serperApiKey: userSettings.serperApiKey,
+        },
+        isAborted: () => state.aborted,
+        onToolStatus: (s) => {
+          emit(req.caller, {
+            type: 'divinci:tool-status',
+            requestId: req.requestId,
+            ...s,
+          })
+        },
+        registerAbort: (controller) => {
+          state.kimiAbort = controller
+        },
+      })
+
+      if (finalized.aborted) {
+        emit(req.caller, { type: 'divinci:aborted', requestId: req.requestId })
+        return
+      }
+
       emit(req.caller, {
         type: 'divinci:chat-done',
         requestId: req.requestId,
-        fullText: result.fullText,
-        tokensGenerated: result.tokensGenerated,
-        durationMs: result.durationMs,
-        toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
+        fullText: finalized.fullText,
+        tokensGenerated: finalized.tokensGenerated,
+        durationMs: finalized.durationMs,
+        toolCalls: finalized.toolCalls,
       })
     }
   } catch (err) {
@@ -238,6 +301,10 @@ function handleAbort(req: InternalAbortRequest): void {
     if (req.requestId !== '*' && state.requestId !== req.requestId) continue
     state.aborted = true
     abortedAny = true
+    // Cancel an in-flight Kimi tool loop (CF + web-search fetches) if one is
+    // running for this chat. The Gemma generation is interrupted separately
+    // via host.abort() below.
+    state.kimiAbort?.abort()
   }
   // Only interrupt the currently-running ChatHost generation if at least
   // one of the aborted chats is the one actually executing right now.
@@ -283,7 +350,10 @@ chrome.runtime.onMessage.addListener(
     case 'internal:set-settings': {
       userSettings = clampSettings(message, userSettings)
       // Persistence happens in the SW — the offscreen has no chrome.storage.
-      log.info('User settings updated:', userSettings)
+      // NEVER log the raw settings object: it holds the CF API token and the
+      // Brave/Serper keys, and the offscreen console is reachable via devtools.
+      // Log presence metadata only (matches the monorepo PII rule).
+      log.info('User settings updated:', redactSettings(userSettings))
       break
     }
   }

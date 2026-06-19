@@ -58,6 +58,27 @@ export interface UserSettings {
   temperature: number
   /** Hard cap on tokens per generation. */
   maxNewTokens: number
+  /**
+   * Cloudflare Account ID for Workers AI API. Required for Kimi K2.7-Code
+   * tool-call routing (the model that handles tool-calling rounds when
+   * Gemma 4 detects tool intent).
+   */
+  cfAccountId?: string
+  /**
+   * Cloudflare API Token with Workers AI permission. Required for Kimi
+   * K2.7-Code tool-call routing.
+   */
+  cfApiToken?: string
+  /**
+   * Brave Search API key. Used for web search tool execution when Kimi
+   * K2.7-Code calls the `web_search` tool.
+   */
+  braveApiKey?: string
+  /**
+   * Serper.dev API key. Alternative to Brave for web search tool execution.
+   * Either braveApiKey or serperApiKey must be set for web search to work.
+   */
+  serperApiKey?: string
 }
 
 /**
@@ -85,6 +106,10 @@ export const DEFAULT_SETTINGS: UserSettings = {
 const isDevBuild =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
+
+// ---- RAG/vector API storage keys ----
+export const STORAGE_KEY_API_KEY = 'divinci_api_key'
+export const STORAGE_KEY_WHITELABEL_ID = 'divinci_whitelabel_id'
 
 export const ALLOWED_WEB_APP_ORIGINS = [
   'https://chat.divinci.app',

@@ -270,9 +270,33 @@ header h1 {
   text-align: right;
 }
 
-.setting-row input[type='number']:focus {
+.setting-row input[type='number']:focus,
+.setting-row input[type='text']:focus,
+.setting-row input[type='password']:focus {
   outline: none;
   border-color: #4f7df0;
+}
+
+.setting-row input[type='password'] {
+  width: 140px;
+  padding: 4px 6px;
+  background: #0f1117;
+  border: 1px solid #2a2e3e;
+  border-radius: 4px;
+  color: #e8e8ec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.setting-row input[type='text'] {
+  width: 140px;
+  padding: 4px 6px;
+  background: #0f1117;
+  border: 1px solid #2a2e3e;
+  border-radius: 4px;
+  color: #e8e8ec;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
 }
 
 .setting-note {
@@ -280,6 +304,11 @@ header h1 {
   font-size: 11px;
   color: #6a708a;
   font-style: italic;
+}
+
+.setting-note.setting-warn {
+  color: #9a6a00;
+  font-style: normal;
 }
 
 .model-action,

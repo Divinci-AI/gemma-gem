@@ -112,9 +112,11 @@ describe('parseToolCalls — Hermes / OpenAI JSON fallback', () => {
     const text =
       '<tool_call>{"name":"get_weather","arguments":{"location":"Boston"}}</tool_call>'
     const calls = parseToolCalls(text, undefined, 'req-h1')
-    expect(calls).toEqual([
-      { id: 'req-h1-0', name: 'get_weather', arguments: { location: 'Boston' } },
-    ])
+    expect(calls).toHaveLength(1)
+    expect(calls[0].id).toBe('req-h1-0')
+    expect(calls[0].name).toBe('get_weather')
+    expect(calls[0].arguments).toEqual({ location: 'Boston' })
+    expect(calls[0].args).toEqual({ location: 'Boston' })
   })
 
   it('handles stringified arguments (OpenAI Chat Completions shape)', () => {
@@ -123,6 +125,7 @@ describe('parseToolCalls — Hermes / OpenAI JSON fallback', () => {
     const calls = parseToolCalls(text, undefined, 'req-h2')
     expect(calls).toHaveLength(1)
     expect(calls[0].arguments).toEqual({ location: 'Boston' })
+    expect(calls[0].args).toEqual({ location: 'Boston' })
   })
 
   it('returns _rawArgs when stringified arguments are not valid JSON', () => {
@@ -131,6 +134,7 @@ describe('parseToolCalls — Hermes / OpenAI JSON fallback', () => {
     const calls = parseToolCalls(text, undefined, 'req-h3')
     expect(calls).toHaveLength(1)
     expect(calls[0].arguments).toEqual({ _rawArgs: 'not-json-here' })
+    expect(calls[0].args).toEqual({ _rawArgs: 'not-json-here' })
   })
 
   it('skips calls missing a name field', () => {
@@ -140,6 +144,8 @@ describe('parseToolCalls — Hermes / OpenAI JSON fallback', () => {
     const calls = parseToolCalls(text, undefined, 'req-h4')
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('ok')
+    expect(calls[0].arguments).toEqual({ x: 2 })
+    expect(calls[0].args).toEqual({ x: 2 })
   })
 
   it('does NOT run Hermes pass when Gemma envelopes were already found', () => {
@@ -151,6 +157,60 @@ describe('parseToolCalls — Hermes / OpenAI JSON fallback', () => {
     const calls = parseToolCalls(text, undefined, 'req-mix')
     expect(calls).toHaveLength(1)
     expect(calls[0].name).toBe('gemma_call')
+  })
+})
+
+describe('parseToolCalls — Divinci Agent format (args not arguments)', () => {
+  it('extracts a tool call with `args` instead of `arguments`', () => {
+    const text =
+      '<tool_call>{"name":"web_search","args":{"query":"weather in Tokyo"}}</tool_call>'
+    const calls = parseToolCalls(text, undefined, 'req-da1')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toEqual({
+      id: 'req-da1-0',
+      name: 'web_search',
+      arguments: { query: 'weather in Tokyo' },
+      args: { query: 'weather in Tokyo' },
+    })
+  })
+
+  it('prefers `arguments` over `args` when both are present', () => {
+    const text =
+      '<tool_call>{"name":"web_search","arguments":{"query":"London"},"args":{"query":"wrong"}}</tool_call>'
+    const calls = parseToolCalls(text, undefined, 'req-da2')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].arguments).toEqual({ query: 'London' })
+  })
+
+  it('parses stringified args (Kimi K2.7-Code style)', () => {
+    const text =
+      '<tool_call>{"name":"web_search","args":"{\\"query\\":\\"latest AI news\\"}"}</tool_call>'
+    const calls = parseToolCalls(text, undefined, 'req-da3')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].arguments).toEqual({ query: 'latest AI news' })
+  })
+
+  it('falls back to empty args when neither `arguments` nor `args` is present', () => {
+    const text =
+      '<tool_call>{"name":"noop_tool"}</tool_call>'
+    const calls = parseToolCalls(text, undefined, 'req-da4')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].arguments).toEqual({})
+    expect(calls[0].args).toEqual({})
+  })
+
+  it('interleaves Divinci Agent format with Gemma native format (both<tool_call> envelopes)', () => {
+    // Gemma uses <|tool_call|>..<tool_call|> ; Hermes/Divinci use <tool_call>..</tool_call>.
+    // The parser runs Gemma first; Hermes/Divinci is only checked if Gemma found nothing.
+    // But the actual Divinci Agent envelope is the SAME as Hermes (<tool_call>),
+    // so they don't conflict. This test verifies they work side by side via the
+    // Hermes fallback path (since the Gemma path didn't find its own envelope).
+    const text =
+      '<tool_call>{"name":"web_search","args":{"query":"SF"}}</tool_call>'
+    const calls = parseToolCalls(text, undefined, 'req-da5')
+    expect(calls).toHaveLength(1)
+    expect(calls[0].name).toBe('web_search')
+    expect(calls[0].arguments).toEqual({ query: 'SF' })
   })
 })
 

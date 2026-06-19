@@ -18,6 +18,7 @@
 import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
+import { setupDivinciAPIBridge } from '@/background/divinci-api-bridge'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -71,6 +72,10 @@ function setupSettingsPersistence(): void {
       const next: UserSettings = {
         temperature: m.temperature ?? prev.temperature ?? DEFAULT_SETTINGS.temperature,
         maxNewTokens: m.maxNewTokens ?? prev.maxNewTokens ?? DEFAULT_SETTINGS.maxNewTokens,
+        cfAccountId: m.cfAccountId ?? prev.cfAccountId,
+        cfApiToken: m.cfApiToken ?? prev.cfApiToken,
+        braveApiKey: m.braveApiKey ?? prev.braveApiKey,
+        serperApiKey: m.serperApiKey ?? prev.serperApiKey,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -91,6 +96,10 @@ async function hydrateOffscreenSettings(): Promise<void> {
       type: 'internal:set-settings',
       temperature: saved.temperature,
       maxNewTokens: saved.maxNewTokens,
+      cfAccountId: saved.cfAccountId,
+      cfApiToken: saved.cfApiToken,
+      braveApiKey: saved.braveApiKey,
+      serperApiKey: saved.serperApiKey,
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {
       log.warn('Settings hydrate sendMessage failed:', e)
@@ -104,6 +113,7 @@ export default defineBackground(() => {
   log.info('Divinci local-inference SW started')
   setupExternalBridge()
   setupInternalBridge()
+  setupDivinciAPIBridge()
   setupSettingsPersistence()
 
   ensureOffscreenDocument()

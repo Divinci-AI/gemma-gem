@@ -44,6 +44,13 @@ if (!ALLOWED_MODES.has(mode)) {
 const MANIFEST_PUBLIC_KEY =
   'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsGNVAMfM6OPVfbS/0QGMRbKHv04SmYg5wHhpJZRVXh/6jbEKP4Rx71nI11fisIzGkbjYSDeUlZoWQrcbP9sJmoYAt32b/Ceodix4cYxUHk+slhYHJRojfu+XDUAms3lZDUpJgC5aD6nrKDWq0fZ0npT4tfxsgtDygrjEexDlhBx2y07gUULkuAqPDuqHwl4m7oZE5QXCvRGuMlZVenw32YejpXlZJrAKdcibz2R4X8eCEhNkQDWlXeuLG0kYijP44Pq7LbKh5M3ucad9WFNBbDVdqeone9COO91zcv8asvQCfyUoYM3EQVdg7HepnSrZmnKnOwak4ugeZerFP+EqjwIDAQAB'
 
+const API_HOSTS = [
+  'https://api.divinci.app',
+  'https://api.stage.divinci.app',
+  'https://api.dev.divinci.app',
+  ...(mode === 'development' ? ['http://localhost:9080'] : []),
+]
+
 export default defineConfig({
   manifest: {
     name: mode === 'development' ? 'Divinci Local Inference [dev]' : 'Divinci Local Inference',
@@ -51,6 +58,7 @@ export default defineConfig({
       'In-browser Gemma 4 inference via WebGPU for chat.divinci.app — model loads once, stays cached, shared across tabs.',
     key: MANIFEST_PUBLIC_KEY,
     permissions: ['offscreen', 'storage'],
+    host_permissions: API_HOSTS.map((h) => `${h}/*`),
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.
     // localhost:8080 is intentionally dev-only. In a published .crx ANY

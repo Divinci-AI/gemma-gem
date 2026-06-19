@@ -73,6 +73,46 @@
           Web-app per-call values override these. Saved automatically.
         </p>
       </details>
+      <details>
+        <summary>Indexing settings</summary>
+        <div class="setting-row">
+          <label for="setting-api-key" title="API key for Divinci RAG/vector API">API key</label>
+          <input type="password" id="setting-api-key" autocomplete="off" />
+        </div>
+        <div class="setting-row">
+          <label for="setting-wl-id" title="Whitelabel ID for Divinci RAG/vector API">Whitelabel ID</label>
+          <input type="text" id="setting-wl-id" autocomplete="off" />
+        </div>
+        <p class="setting-note">
+          Saved automatically. Page status pill in sidebar requires these.
+        </p>
+      </details>
+      <details>
+        <summary>Tool APIs (Kimi K2.7-Code + web search)</summary>
+        <div class="setting-row">
+          <label for="setting-cf-account-id" title="Cloudflare Account ID for Workers AI API. Required for Kimi tool routing.">CF Account ID</label>
+          <input type="text" id="setting-cf-account-id" autocomplete="off" placeholder="acct_..." />
+        </div>
+        <div class="setting-row">
+          <label for="setting-cf-api-token" title="Cloudflare API Token scoped to Workers AI (Read/Run) only. Required for Kimi tool routing.">CF API Token</label>
+          <input type="password" id="setting-cf-api-token" autocomplete="off" />
+        </div>
+        <p class="setting-note setting-warn">
+          Scope this token to <strong>Workers AI → Read/Run</strong> only — never use a
+          global API key. It is stored on this device and sent only to api.cloudflare.com.
+        </p>
+        <div class="setting-row">
+          <label for="setting-brave-api-key" title="Brave Search API key (alternative to Serper for web search tool execution).">Brave API Key</label>
+          <input type="password" id="setting-brave-api-key" autocomplete="off" />
+        </div>
+        <div class="setting-row">
+          <label for="setting-serper-api-key" title="Serper.dev API key (alternative to Brave for web search tool execution).">Serper API Key</label>
+          <input type="password" id="setting-serper-api-key" autocomplete="off" />
+        </div>
+        <p class="setting-note">
+          Saved automatically. Brave or Serper key required for web search.
+        </p>
+      </details>
     </section>
 
     <footer>

@@ -59,7 +59,16 @@ export interface ChatTool {
 export interface ChatToolCall {
   id: string
   name: string
+  /** Canonical field; OpenAI / Hermes format. Always set by the parser. */
   arguments: Record<string, unknown>
+  /**
+   * Divinci Agent format alias. Some models output `args` instead of
+   * `arguments` inside the JSON tool-call envelope. When set, it is
+   * identical to `arguments` (the parser normalizes on write). Consumers
+   * that need to round-trip the raw shape to a downstream model should
+   * prefer `arguments`.
+   */
+  args?: Record<string, unknown>
 }
 
 export interface DivinciExternalChatRequest {
@@ -154,6 +163,24 @@ export interface DivinciExternalErrorEvent {
   fatal: boolean
 }
 
+/**
+ * Tool-routing status events sent during a chat that triggers the Gemma 4
+ * → Kimi K2.7-Code tool-calling pipeline.
+ *
+ * Sequence:
+ *   1. `status: 'routing'`  — tool calls detected, routing to Kimi
+ *   2. `status: 'done'`      — Kimi loop completed successfully
+ *   3. `status: 'error'`     — Kimi loop failed, falling back to Gemma 4 output
+ */
+export interface DivinciExternalToolStatusEvent {
+  type: 'divinci:tool-status'
+  requestId: string
+  status: 'routing' | 'done' | 'error'
+  calls: Array<{ name: string; args: Record<string, unknown> }>
+  iterations?: number
+  error?: string
+}
+
 export type DivinciExternalEvent =
   | DivinciExternalPong
   | DivinciExternalLoadProgressEvent
@@ -163,6 +190,7 @@ export type DivinciExternalEvent =
   | DivinciExternalChatDoneEvent
   | DivinciExternalAbortedEvent
   | DivinciExternalErrorEvent
+  | DivinciExternalToolStatusEvent
 
 // ---- Internal protocol (background ↔ offscreen, one Chrome runtime hop) ----
 
@@ -245,6 +273,11 @@ export interface InternalSetSettingsRequest {
   type: 'internal:set-settings'
   temperature?: number
   maxNewTokens?: number
+  /** Cloudflare API credential fields; persisted in chrome.storage by the SW. */
+  cfAccountId?: string
+  cfApiToken?: string
+  braveApiKey?: string
+  serperApiKey?: string
 }
 
 /**
@@ -267,6 +300,27 @@ export interface InternalClearCacheRequest {
   type: 'internal:clear-cache'
 }
 
+// ---- Page-check protocol (content script ↔ background) ----
+
+/**
+ * Request from the sidebar/contentscript: "is this URL indexed? If not, trigger a scrape."
+ */
+export interface InternalPageCheckRequest {
+  type: 'internal:check-page'
+  url: string
+}
+
+/**
+ * Page-check result sent back to the sidebar/contentscript.
+ */
+export interface InternalPageCheckResponse {
+  type: 'internal:page-status'
+  url: string
+  status: 'not-configured' | 'indexed' | 'triggered' | 'error' | 'checking'
+  error?: string
+  crawlId?: string
+}
+
 export type InternalRequest =
   | InternalLoadRequest
   | InternalChatRequest
@@ -275,6 +329,7 @@ export type InternalRequest =
   | InternalUnloadRequest
   | InternalClearCacheRequest
   | InternalSetSettingsRequest
+  | InternalPageCheckRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {

@@ -83,6 +83,10 @@ function parseGemmaArguments(rawBody: string): Record<string, unknown> {
  * Parse Hermes/OpenAI-style JSON tool calls.
  * Shape: `{ "name": "...", "arguments": {...} }` (object) OR
  *        `{ "name": "...", "arguments": "{...}" }` (stringified args)
+ *
+ * Also handles the Divinci Agent variant which uses `args` instead of `arguments`:
+ *        `{ "name": "...", "args": {...} }`
+ * When `arguments` is absent, falls back to `args` and normalizes it.
  */
 function parseHermesToolCall(json: string): { name: string; arguments: Record<string, unknown> } | null {
   let parsed: unknown
@@ -96,22 +100,49 @@ function parseHermesToolCall(json: string): { name: string; arguments: Record<st
   if (typeof obj.name !== 'string') return null
 
   let args: Record<string, unknown>
-  if (typeof obj.arguments === 'string') {
-    try {
-      const argsParsed = JSON.parse(obj.arguments)
-      args =
-        argsParsed && typeof argsParsed === 'object' && !Array.isArray(argsParsed)
-          ? (argsParsed as Record<string, unknown>)
-          : { _rawArgs: obj.arguments }
-    } catch {
-      args = { _rawArgs: obj.arguments }
+
+  // Try `arguments` first (OpenAI / Hermes standard)
+  if ('arguments' in obj) {
+    if (typeof obj.arguments === 'string') {
+      try {
+        const argsParsed = JSON.parse(obj.arguments)
+        args =
+          argsParsed && typeof argsParsed === 'object' && !Array.isArray(argsParsed)
+            ? (argsParsed as Record<string, unknown>)
+            : { _rawArgs: obj.arguments }
+      } catch {
+        args = { _rawArgs: obj.arguments }
+      }
+    } else if (
+      obj.arguments &&
+      typeof obj.arguments === 'object' &&
+      !Array.isArray(obj.arguments)
+    ) {
+      args = obj.arguments as Record<string, unknown>
+    } else {
+      args = {}
     }
-  } else if (
-    obj.arguments &&
-    typeof obj.arguments === 'object' &&
-    !Array.isArray(obj.arguments)
-  ) {
-    args = obj.arguments as Record<string, unknown>
+  } else if ('args' in obj) {
+    // Divinci Agent variant: `args` instead of `arguments`
+    if (typeof obj.args === 'string') {
+      try {
+        const argsParsed = JSON.parse(obj.args)
+        args =
+          argsParsed && typeof argsParsed === 'object' && !Array.isArray(argsParsed)
+            ? (argsParsed as Record<string, unknown>)
+            : { _rawArgs: obj.args }
+      } catch {
+        args = { _rawArgs: obj.args }
+      }
+    } else if (
+      obj.args &&
+      typeof obj.args === 'object' &&
+      !Array.isArray(obj.args)
+    ) {
+      args = obj.args as Record<string, unknown>
+    } else {
+      args = {}
+    }
   } else {
     args = {}
   }
@@ -178,6 +209,9 @@ export function parseToolCalls(
         id: `${idPrefix}-${index}`,
         name: parsed.name,
         arguments: parsed.arguments,
+        // Normalize: Divinci Agent format uses `args`, OpenAI/Hermes use `arguments`.
+        // Setting both so consumers can read whichever field their downstream expects.
+        args: parsed.arguments,
       })
       index += 1
     }

@@ -13,6 +13,7 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
+    "pretest": "npm run compile",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test --config=e2e/playwright.config.ts",

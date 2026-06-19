@@ -15,7 +15,7 @@ import type {
   InternalRequest,
   InternalStatusResponse,
 } from '@/shared/messages'
-import { MODELS, STORAGE_KEY_MODEL, type ModelId } from '@/shared/models'
+import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_API_KEY, STORAGE_KEY_WHITELABEL_ID, type ModelId } from '@/shared/models'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -39,6 +39,12 @@ const els = {
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
   tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
   maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
+  apiKeyInput: document.getElementById('setting-api-key') as HTMLInputElement,
+  wlIdInput: document.getElementById('setting-wl-id') as HTMLInputElement,
+  cfAccountIdInput: document.getElementById('setting-cf-account-id') as HTMLInputElement,
+  cfApiTokenInput: document.getElementById('setting-cf-api-token') as HTMLInputElement,
+  braveApiKeyInput: document.getElementById('setting-brave-api-key') as HTMLInputElement,
+  serperApiKeyInput: document.getElementById('setting-serper-api-key') as HTMLInputElement,
 }
 
 // Track which inputs the user has touched so we don't fight their typing
@@ -279,6 +285,50 @@ for (const input of [els.tempInput, els.maxTokensInput]) {
   })
 }
 
+// ---- RAG config (no debounce — commit on each change) --------------------
+async function saveRagConfig(): Promise<void> {
+  void chrome.storage.local.set({
+    [STORAGE_KEY_API_KEY]: els.apiKeyInput.value,
+    [STORAGE_KEY_WHITELABEL_ID]: els.wlIdInput.value,
+  })
+}
+
+// Load stored RAG config and populate inputs. Commit changes immediately on
+// input (no debounce — typing a key is fast enough for storage I/O).
+async function loadRagConfig(): Promise<void> {
+  const stored = await chrome.storage.local.get([STORAGE_KEY_API_KEY, STORAGE_KEY_WHITELABEL_ID]) as Record<string, string | undefined>
+  els.apiKeyInput.value = stored[STORAGE_KEY_API_KEY] ?? ''
+  els.wlIdInput.value = stored[STORAGE_KEY_WHITELABEL_ID] ?? ''
+}
+els.apiKeyInput.addEventListener('input', () => { void saveRagConfig() })
+els.wlIdInput.addEventListener('input', () => { void saveRagConfig() })
+
+// ---- Tool API credentials (immediate commit, no debounce) ---------------
+function sendToolApiCredentials(): void {
+  void sendInternal({
+    type: 'internal:set-settings',
+    cfAccountId: els.cfAccountIdInput.value || undefined,
+    cfApiToken: els.cfApiTokenInput.value || undefined,
+    braveApiKey: els.braveApiKeyInput.value || undefined,
+    serperApiKey: els.serperApiKeyInput.value || undefined,
+  })
+}
+
+async function loadToolApiCredentials(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+  const settings = stored[STORAGE_KEY_SETTINGS] as
+    | { cfAccountId?: string; cfApiToken?: string; braveApiKey?: string; serperApiKey?: string }
+    | undefined
+  els.cfAccountIdInput.value = settings?.cfAccountId ?? ''
+  els.cfApiTokenInput.value = settings?.cfApiToken ?? ''
+  els.braveApiKeyInput.value = settings?.braveApiKey ?? ''
+  els.serperApiKeyInput.value = settings?.serperApiKey ?? ''
+}
+
+for (const input of [els.cfAccountIdInput, els.cfApiTokenInput, els.braveApiKeyInput, els.serperApiKeyInput]) {
+  input.addEventListener('input', () => { void sendToolApiCredentials() })
+}
+
 // Render version from manifest
 const manifest = chrome.runtime.getManifest()
 els.version.textContent = `v${manifest.version}`
@@ -331,6 +381,8 @@ els.clearCacheBtn.addEventListener('click', async () => {
 // Initial paint + steady poll while popup is open
 void poll()
 void refreshStorageEstimate()
+void loadRagConfig()
+void loadToolApiCredentials()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are
 // actually downloaded/evicted, both of which are infrequent compared to
