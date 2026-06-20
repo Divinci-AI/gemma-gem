@@ -140,8 +140,9 @@ function mountSidebar(
   const el = {
     launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
     expandBtn: root.querySelector<HTMLButtonElement>('.dls-expand')!,
-    shareBtn: root.querySelector<HTMLButtonElement>('.dls-share')!,
-    shareMenu: root.querySelector<HTMLElement>('.dls-share-menu')!,
+    expandLabel: root.querySelector<HTMLElement>('.dls-expand-label')!,
+    menuBtn: root.querySelector<HTMLButtonElement>('.dls-menu-btn')!,
+    menu: root.querySelector<HTMLElement>('.dls-menu')!,
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
     shareLink: root.querySelector<HTMLButtonElement>('.dls-share-link')!,
@@ -624,7 +625,9 @@ function mountSidebar(
     // Compared as string: a background check can surface 'error'/'unavailable'
     // at runtime even if they're not in the narrowed status type.
     const state = pageStatus as string
-    if (!pageStatus || state === 'error' || state === 'unavailable') {
+    // Hide the pill for non-actionable states — including 'not-configured'
+    // ("WWW RAG off"), which is just noise in the header.
+    if (!pageStatus || state === 'error' || state === 'unavailable' || state === 'not-configured') {
       el.pagePill.hidden = true
       return
     }
@@ -869,10 +872,15 @@ function mountSidebar(
   }
 
   // ---- Conversations (full-screen rail) -----------------------------------
+  function renderExpandLabel(): void {
+    el.expandLabel.textContent = root.classList.contains('dls-expanded')
+      ? 'Exit full screen'
+      : 'Full screen'
+  }
+
   function setExpanded(expanded: boolean, persist = true): void {
     root.classList.toggle('dls-expanded', expanded)
-    el.expandBtn.title = expanded ? 'Collapse' : 'Expand'
-    el.expandBtn.setAttribute('aria-label', expanded ? 'Collapse' : 'Expand to full screen')
+    renderExpandLabel()
     if (expanded) void renderConvList()
     if (persist) void chrome.storage.local.set({ [STORAGE_KEY_EXPANDED]: expanded })
   }
@@ -956,9 +964,11 @@ function mountSidebar(
   function renderGlobalModeToggle(): void {
     el.globalToggle.dataset.state = globalChatMode ? 'global' : 'tab'
     el.globalToggle.setAttribute('aria-pressed', String(globalChatMode))
+    const label = el.globalToggle.querySelector('.dls-menu-label')
+    if (label) label.textContent = globalChatMode ? 'Global chat: all tabs' : 'Global chat: this tab'
     el.globalToggle.title = globalChatMode
-      ? 'Global chat: this conversation follows you across all tabs. Click for per-tab chats.'
-      : 'Per-tab chat: each tab has its own conversation. Click to make one chat follow you across tabs.'
+      ? 'This conversation follows you across all tabs. Click for per-tab chats.'
+      : 'Each tab has its own conversation. Click to make one chat follow you across tabs.'
   }
 
   /**
@@ -1054,11 +1064,17 @@ function mountSidebar(
     }
   }
 
-  function toggleShareMenu(open?: boolean): void {
-    const next = open ?? el.shareMenu.hidden
-    el.shareMenu.hidden = !next
-    el.shareBtn.setAttribute('aria-expanded', String(next))
-    if (next) void refreshShareLinkState()
+  // The header hamburger menu (global-chat toggle, full-screen, share actions).
+  function toggleMenu(open?: boolean): void {
+    const next = open ?? el.menu.hidden
+    el.menu.hidden = !next
+    el.menuBtn.setAttribute('aria-expanded', String(next))
+    if (next) {
+      // Refresh the menu items' live state when it opens.
+      renderGlobalModeToggle()
+      renderExpandLabel()
+      void refreshShareLinkState()
+    }
   }
 
   /**
@@ -1084,9 +1100,12 @@ function mountSidebar(
     if (activeConversationId == null) return
     const conv = await store.get(activeConversationId)
     if (!conv?.serverChatId) return
-    const prevLabel = el.shareLink.textContent
+    // The menu item holds an icon + a label span; only mutate the label.
+    const label = el.shareLink.querySelector('.dls-menu-label') as HTMLElement | null
+    const setLabel = (t: string) => { if (label) label.textContent = t }
+    const prevLabel = label?.textContent ?? 'Copy Divinci link'
     el.shareLink.disabled = true
-    el.shareLink.textContent = 'Creating link…'
+    setLabel('Creating link…')
     const req: import('@/shared/messages').InternalAccountShareRequest = {
       type: 'internal:account-share',
       serverChatId: conv.serverChatId,
@@ -1111,16 +1130,16 @@ function mountSidebar(
       } catch {
         copied = false
       }
-      el.shareLink.textContent = copied ? 'Link copied ✓' : 'Link ready (copy failed)'
+      setLabel(copied ? 'Link copied ✓' : 'Link ready (copy failed)')
       window.setTimeout(() => {
-        el.shareLink.textContent = prevLabel
+        setLabel(prevLabel)
         el.shareLink.disabled = false
-        toggleShareMenu(false)
+        toggleMenu(false)
       }, 1400)
     } else {
-      el.shareLink.textContent = resp?.skipped ? 'Sign in to share' : 'Share failed'
+      setLabel(resp?.skipped ? 'Sign in to share' : 'Share failed')
       window.setTimeout(() => {
-        el.shareLink.textContent = prevLabel
+        setLabel(prevLabel)
         el.shareLink.disabled = false
       }, 1600)
     }
@@ -1527,29 +1546,35 @@ function mountSidebar(
     void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: true })
   })
   el.close.addEventListener('click', () => setOpen(false))
-  el.expandBtn.addEventListener('click', () => setExpanded(!root.classList.contains('dls-expanded')))
-  el.globalToggle.addEventListener('click', () => void setGlobalChatMode(!globalChatMode))
   el.newChatBtn.addEventListener('click', newChat)
-  el.shareBtn.addEventListener('click', (e) => {
+  // Hamburger menu (global / full-screen / share) — open/close.
+  el.menuBtn.addEventListener('click', (e) => {
     e.stopPropagation()
-    toggleShareMenu()
+    toggleMenu()
   })
+  // Full-screen toggle: apply + close the menu (it changes the whole layout).
+  el.expandBtn.addEventListener('click', () => {
+    setExpanded(!root.classList.contains('dls-expanded'))
+    toggleMenu(false)
+  })
+  // Global-chat toggle: flip + keep the menu open so the label change is visible.
+  el.globalToggle.addEventListener('click', () => void setGlobalChatMode(!globalChatMode))
   el.shareMd.addEventListener('click', () => {
-    toggleShareMenu(false)
+    toggleMenu(false)
     void shareDownload('md')
   })
   el.shareJson.addEventListener('click', () => {
-    toggleShareMenu(false)
+    toggleMenu(false)
     void shareDownload('json')
   })
   el.shareLink.addEventListener('click', () => {
     if (el.shareLink.disabled) return
     void shareDivinciLink()
   })
-  // Close the share menu on any click outside it.
+  // Close the menu on any click outside it.
   root.addEventListener('click', (e) => {
-    if (!el.shareMenu.hidden && !el.shareBtn.contains(e.target as Node) && !el.shareMenu.contains(e.target as Node)) {
-      toggleShareMenu(false)
+    if (!el.menu.hidden && !el.menuBtn.contains(e.target as Node) && !el.menu.contains(e.target as Node)) {
+      toggleMenu(false)
     }
   })
   el.loadBtn.addEventListener('click', loadModel)
@@ -1733,30 +1758,36 @@ const TEMPLATE = /* html */ `
         </button>
       </div>
       <div class="dls-header-actions">
-        <button class="dls-global-toggle" type="button" data-state="tab" aria-pressed="false" aria-label="Toggle global chat (follow across tabs)">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
-            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/>
-          </svg>
-        </button>
-        <div class="dls-share-wrap">
-          <button class="dls-share" aria-label="Share chat" title="Share chat" aria-haspopup="true" aria-expanded="false">
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-              <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7M12 3v13M8 7l4-4 4 4"/>
+        <div class="dls-menu-wrap">
+          <button class="dls-menu-btn" type="button" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M4 12h16M4 17h16"/>
             </svg>
           </button>
-          <div class="dls-share-menu" hidden>
-            <button class="dls-share-md" type="button">Download Markdown</button>
-            <button class="dls-share-json" type="button">Download JSON</button>
-            <button class="dls-share-link" type="button" disabled title="Sign in to sync this chat to your Divinci account, then copy a public share link">Copy Divinci share link</button>
+          <div class="dls-menu" hidden role="menu">
+            <button class="dls-menu-item dls-global-toggle" type="button" role="menuitem" data-state="tab" aria-pressed="false">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/></svg>
+              <span class="dls-menu-label">Global chat</span>
+            </button>
+            <button class="dls-menu-item dls-expand" type="button" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/></svg>
+              <span class="dls-menu-label dls-expand-label">Full screen</span>
+            </button>
+            <div class="dls-menu-sep"></div>
+            <button class="dls-menu-item dls-share-md" type="button" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
+              <span class="dls-menu-label">Download Markdown</span>
+            </button>
+            <button class="dls-menu-item dls-share-json" type="button" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
+              <span class="dls-menu-label">Download JSON</span>
+            </button>
+            <button class="dls-menu-item dls-share-link" type="button" role="menuitem" disabled title="Sign in to sync this chat to your Divinci account, then copy a public share link">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"/></svg>
+              <span class="dls-menu-label">Copy Divinci link</span>
+            </button>
           </div>
         </div>
-        <button class="dls-expand" aria-label="Expand to full screen" title="Expand">
-          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-            <path class="dls-expand-open" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
-            <path class="dls-expand-collapse" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5" hidden/>
-          </svg>
-        </button>
         <button class="dls-close" aria-label="Close">×</button>
       </div>
     </header>
@@ -1782,6 +1813,7 @@ const TEMPLATE = /* html */ `
         </div>
 
         <footer class="dls-footer">
+          <p class="dls-safety">Gemma is an AI model and can make mistakes — verify important information.</p>
           <div class="dls-compose-row">
             <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
             <button class="dls-mic" type="button" aria-label="Dictate (speech to text)" title="Dictate" hidden>
@@ -1792,7 +1824,6 @@ const TEMPLATE = /* html */ `
             </button>
             <button class="dls-send" data-mode="send" disabled>Send</button>
           </div>
-          <p class="dls-safety">Gemma is an AI model and can make mistakes — verify important information.</p>
           <p class="dls-disclaimer">
             <span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span>
             <a class="dls-disclaimer-link" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer">Privacy</a>
@@ -1983,22 +2014,11 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-close:hover { color: var(--dls-text); }
   .dls-header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
-  .dls-expand {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: var(--dls-muted);
-    cursor: pointer;
-    padding: 3px;
-    border-radius: 6px;
-  }
-  .dls-expand:hover { color: var(--dls-text); background: var(--dls-bg-2); }
-  .dls-expand-collapse { display: none; }
 
-  /* Global / per-tab chat toggle. Accent-highlighted when global is active. */
-  .dls-global-toggle {
+  /* Hamburger menu: a single button opens a labelled dropdown of header
+     actions (global chat / full screen / share), de-cluttering the header. */
+  .dls-menu-wrap { position: relative; display: flex; }
+  .dls-menu-btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2006,32 +2026,16 @@ const SIDEBAR_CSS = /* css */ `
     border: none;
     color: var(--dls-muted);
     cursor: pointer;
-    padding: 3px;
+    padding: 4px;
     border-radius: 6px;
   }
-  .dls-global-toggle:hover { color: var(--dls-text); background: var(--dls-bg-2); }
-  .dls-global-toggle[data-state="global"] { color: var(--dls-accent); }
-
-  /* Share button + dropdown menu. */
-  .dls-share-wrap { position: relative; display: flex; }
-  .dls-share {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: none;
-    color: var(--dls-muted);
-    cursor: pointer;
-    padding: 3px;
-    border-radius: 6px;
-  }
-  .dls-share:hover { color: var(--dls-text); background: var(--dls-bg-2); }
-  .dls-share-menu {
+  .dls-menu-btn:hover { color: var(--dls-text); background: var(--dls-bg-2); }
+  .dls-menu {
     position: absolute;
     top: calc(100% + 6px);
     right: 0;
     z-index: 10;
-    min-width: 200px;
+    min-width: 210px;
     background: var(--dls-bg-2);
     border: 1px solid var(--dls-border);
     border-radius: 8px;
@@ -2041,8 +2045,11 @@ const SIDEBAR_CSS = /* css */ `
     flex-direction: column;
     gap: 2px;
   }
-  .dls-share-menu[hidden] { display: none; }
-  .dls-share-menu button {
+  .dls-menu[hidden] { display: none; }
+  .dls-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
     font-family: inherit;
     text-align: left;
     font-size: 13px;
@@ -2053,10 +2060,12 @@ const SIDEBAR_CSS = /* css */ `
     color: var(--dls-text);
     cursor: pointer;
   }
-  .dls-share-menu button:hover:not(:disabled) { background: var(--dls-bg); }
-  .dls-share-menu button:disabled { color: var(--dls-muted); cursor: default; font-size: 12px; }
-  .dls-root.dls-expanded .dls-expand-open { display: none; }
-  .dls-root.dls-expanded .dls-expand-collapse { display: inline; }
+  .dls-menu-item svg { flex-shrink: 0; color: var(--dls-muted); }
+  .dls-menu-item:hover:not(:disabled) { background: var(--dls-bg); }
+  .dls-menu-item:hover:not(:disabled) svg { color: var(--dls-text); }
+  .dls-menu-item:disabled { color: var(--dls-muted); cursor: default; }
+  .dls-menu-item.dls-global-toggle[data-state="global"] svg { color: var(--dls-accent); }
+  .dls-menu-sep { height: 1px; background: var(--dls-border); margin: 4px 2px; }
 
   /* Body splits into the conversation rail (expanded only) + the main column. */
   .dls-body { display: flex; flex: 1; min-height: 0; }
