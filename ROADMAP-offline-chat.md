@@ -136,22 +136,41 @@ chat from §1, as a native-feeling app).
 **The deciding constraint is WebGPU** — Gemma runs via transformers.js on WebGPU, so
 the desktop runtime MUST expose WebGPU to the web layer.
 
-| Option | WebGPU | Binary size | Effort | Notes |
-|---|---|---|---|---|
-| **PWA (installable)** | ✅ (Chrome/Edge engine) | ~0 (uses browser) | **Lowest** | Reuses §1 verbatim; "Install app" from the browser; offline via service worker. Not a true native binary. |
-| **Electron** | ✅ (bundles Chromium) | ~150–200 MB | Medium | Guaranteed WebGPU + transformers.js as-is. True downloadable installer. Heaviest binary. |
-| **Tauri** | ⚠️ system webview (WebView2 ✅; WKWebView/WebKitGTK WebGPU is experimental/inconsistent) | ~10–20 MB | Medium | Tiny binary, but WebGPU support varies by OS webview — real risk for the model path. |
+**WebGPU-in-system-webview status (verified 2026-06 — this is the deciding fact):**
+- **Windows / WebView2** (Edge/Chromium): WebGPU ships by default. ✅
+- **macOS / WKWebView**: WebGPU shipped in **Safari 26 / macOS Tahoe 26** (2025);
+  WKWebView is Safari's engine, so WebGPU is available there on macOS 26+. ✅ on
+  current macOS, ❌ on older. (Sources: WebKit blog Safari 26; web.dev.)
+- **Linux / WebKitGTK**: WebGPU is the laggard — not a confirmed shipping default;
+  treat as ⚠️/unavailable. This is the real Tauri gap.
 
-**Recommendation: PWA first, Electron for the true binary, skip Tauri for now.**
-- **Phase 1 — PWA:** make the §1 page-wide chat installable (manifest + service
-  worker caching the app shell; the ~2.9 GB model already caches via the Cache API).
-  Near-zero extra work once §1 exists; gives a "downloadable" offline app immediately
-  on Chrome/Edge.
-- **Phase 2 — Electron:** wrap the same web build in Electron for a real downloadable
-  installer with guaranteed WebGPU, code-signing, auto-update. This is the "desktop
-  app" deliverable proper.
-- **Tauri** only if binary size becomes a hard requirement AND WebView2-on-Windows
-  is the primary target (where WebGPU works).
+| Option | WebGPU | Binary | Effort | Notes |
+|---|---|---|---|---|
+| **PWA (installable)** | ✅ Chrome/Edge engine | ~0 | **Lowest** | Reuses §1 verbatim; install from browser; offline SW. Not a native binary. |
+| **Tauri v2** | ✅ Win (WebView2) + macOS 26+ (WKWebView); ⚠️ Linux (WebKitGTK) | **~10–20 MB** | Medium | Tiny native binary; the owner's preference. WebGPU now works on **current** Win/Mac; Linux + older-OS users need a graceful fallback. |
+| **Electron** | ✅ everywhere (bundles Chromium) | ~150–200 MB | Medium | Guaranteed WebGPU on any OS/version; heaviest binary. The safe fallback. |
+
+**Recommendation (revised — Tauri v2 is viable now): PWA first, then Tauri v2 as the
+native binary, with a hard WebGPU capability gate.**
+- **Phase 1 — PWA:** installable §1 chat (manifest + SW shell cache; the ~2.9 GB
+  model already caches via Cache API). Near-zero work once §1 exists; ships a
+  "downloadable" offline app on Chrome/Edge immediately.
+- **Phase 2 — Tauri v2** (per the owner): wrap the §1 web build via `tauri.app` v2.
+  ~10–20 MB binaries, Rust shell. **Hard requirements before committing:**
+  1. **WebGPU capability gate at startup** — reuse our existing capability probe; if
+     the system webview lacks WebGPU (old macOS, most Linux), show a clear "this
+     build needs WebGPU — update your OS, or use the web app / Electron build"
+     message instead of a cryptic model-load crash.
+  2. **Validate the model path on each target webview early** — spike `tauri dev`
+     loading Gemma on Windows (WebView2) + macOS 26 (WKWebView) before building the
+     full shell. This de-risks the one thing that can sink Tauri.
+  3. **Linux:** ship as best-effort / document the WebGPU limitation, or offer the
+     Electron build for Linux users.
+  - Desktop OAuth: loopback (`http://127.0.0.1:<port>/callback`) or custom scheme
+    (`divinci://callback`) redirect + a dedicated Auth0 app (same pattern as the
+    extension app). Tauri's `shell`/`deep-link` plugins handle the round trip.
+- **Electron** stays the documented fallback for guaranteed WebGPU on older OSes /
+  Linux if Tauri's coverage proves too narrow.
 
 **Auth in desktop:** OAuth PKCE can't use the `chromiumapp.org` redirect outside an
 extension. Desktop uses a **loopback redirect** (`http://127.0.0.1:<port>/callback`)
@@ -177,7 +196,7 @@ auto-update, CI for 3 OSes).
    ├─ §1 Page-wide chat + local/account persistence + import       ~1 wk
    │     │
    │     ├─ §3 Phase 1: PWA (installable offline app)               ~2–3 d
-   │     └─ §3 Phase 2: Electron desktop binary                     ~1–2 wk
+   │     └─ §3 Phase 2: Tauri v2 native binary (+ WebGPU gate)      ~1–2 wk
    │
    └─ §2 Track A: offline tools (calc/datetime/page_extract)        ~2–3 d  (parallelizable)
          §2 Track B1: account-proxied MCP/tool catalog              ~3–4 d
@@ -188,10 +207,16 @@ auto-update, CI for 3 OSes).
 app, installable, with synced history — reusing everything we already built. §2
 Track A (offline tools) can run in parallel since it only touches the tool registry.
 
-## Open questions for the owner
+## Decisions locked (2026-06-19)
+- **Start with §0** (shared chat-core foundation) before the new surfaces.
+- **Desktop = Tauri v2** (PWA first as the zero-cost interim), gated on the WebGPU
+  capability probe + an early model-load spike on WebView2/WKWebView. Electron is the
+  fallback for guaranteed WebGPU on older OSes / Linux.
+- **MCP = account-proxied (B1)** for v1; direct remote MCP (B2) deferred.
+
+## Open questions still to answer
 1. New-tab override for the page-wide chat: opt-in setting, or never? (recommend opt-in)
-2. Desktop: PWA-first acceptable as the initial "download," or do you need a true
-   native installer (Electron) on day one?
-3. MCP: is account-proxied (B1) enough for v1, or do you want the extension to connect
-   to remote MCP servers directly (B2)?
-4. Offline tool priority: which 3–4 tools first?
+2. Offline tool priority — which 3–4 first? (recommend calculator + datetime +
+   page_extract, all offline.)
+3. Tauri Linux: best-effort with a WebGPU warning, or point Linux users at the web
+   app / an Electron build?
