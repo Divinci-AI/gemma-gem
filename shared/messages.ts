@@ -301,11 +301,15 @@ export interface InternalDivinciAuthStatusRequest {
   type: 'internal:divinci-auth-status'
 }
 
-/** SW → popup: sign-in state + (on success) the account email. */
+/** SW → popup: sign-in state + (on success) the account email/name/avatar. */
 export interface InternalDivinciAuthStatusResponse {
   type: 'internal:divinci-auth-status-response'
   signedIn: boolean
   email?: string
+  /** Display name from the id_token, for the popup avatar/menu. */
+  name?: string
+  /** Avatar URL from the id_token, for the popup + sidebar avatar. */
+  picture?: string
   error?: string
 }
 

@@ -74,7 +74,13 @@ async function postToken(body: string): Promise<DivinciAuthTokens> {
 
 // ---- interactive sign-in ----
 
-export async function signIn(): Promise<{ signedIn: boolean; email?: string; error?: string }> {
+export async function signIn(): Promise<{
+  signedIn: boolean
+  email?: string
+  name?: string
+  picture?: string
+  error?: string
+}> {
   try {
     const redirectUri = chrome.identity.getRedirectURL()
     const codeVerifier = generateCodeVerifier()
@@ -102,7 +108,7 @@ export async function signIn(): Promise<{ signedIn: boolean; email?: string; err
     const tokens = await postToken(buildCodeExchangeBody({ code, codeVerifier, redirectUri }))
     await setStoredTokens(tokens)
     log.info('[divinci-auth] signed in', { hasRefresh: Boolean(tokens.refreshToken) })
-    return { signedIn: true, email: tokens.email }
+    return { signedIn: true, email: tokens.email, name: tokens.name, picture: tokens.picture }
   } catch (err) {
     log.error('[divinci-auth] sign-in failed:', err)
     return { signedIn: false, error: (err as Error).message ?? String(err) }
@@ -114,10 +120,15 @@ export async function signOut(): Promise<void> {
   log.info('[divinci-auth] signed out')
 }
 
-export async function getAuthStatus(): Promise<{ signedIn: boolean; email?: string }> {
+export async function getAuthStatus(): Promise<{
+  signedIn: boolean
+  email?: string
+  name?: string
+  picture?: string
+}> {
   const tokens = await getStoredTokens()
   if (!tokens) return { signedIn: false }
-  return { signedIn: true, email: tokens.email }
+  return { signedIn: true, email: tokens.email, name: tokens.name, picture: tokens.picture }
 }
 
 // Single-flight refresh guard. The Auth0 app uses ROTATING refresh tokens, so
@@ -267,6 +278,8 @@ export function setupDivinciAuthBridge(): void {
               type: 'internal:divinci-auth-status-response',
               signedIn: r.signedIn,
               email: r.email,
+              name: r.name,
+              picture: r.picture,
               error: r.error,
             }
             sendResponse(resp)
@@ -287,6 +300,8 @@ export function setupDivinciAuthBridge(): void {
               type: 'internal:divinci-auth-status-response',
               signedIn: s.signedIn,
               email: s.email,
+              name: s.name,
+              picture: s.picture,
             }
             sendResponse(resp)
           })

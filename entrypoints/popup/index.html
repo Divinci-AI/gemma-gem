@@ -9,9 +9,31 @@
   <body>
     <header>
       <img src="/icon/48.png" alt="Divinci" width="32" height="32" />
-      <div>
+      <div class="header-titles">
         <h1>Divinci Local Inference</h1>
         <p class="subtitle">Gemma 4, on your GPU</p>
+      </div>
+      <div id="header-account" class="header-account">
+        <!-- Signed-out state -->
+        <button id="header-signin-btn" class="header-signin-btn" type="button" hidden>
+          Sign in with Divinci
+        </button>
+        <!-- Signed-in state -->
+        <button id="header-avatar-btn" class="header-avatar-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Divinci account" hidden>
+          <img id="header-avatar" class="header-avatar" alt="" width="28" height="28" hidden />
+          <span id="header-avatar-fallback" class="header-avatar-fallback" hidden></span>
+        </button>
+        <div id="header-account-menu" class="header-account-menu" hidden>
+          <div class="header-account-menu-id">
+            <img id="header-menu-avatar" class="header-menu-avatar" alt="" width="36" height="36" hidden />
+            <span id="header-menu-avatar-fallback" class="header-menu-avatar-fallback" hidden></span>
+            <div class="header-account-menu-text">
+              <span id="header-name" class="header-name"></span>
+              <span id="header-email" class="header-email"></span>
+            </div>
+          </div>
+          <button id="header-signout-btn" class="header-signout-btn" type="button">Sign out</button>
+        </div>
       </div>
     </header>
 
@@ -89,7 +111,7 @@
       </details>
       <details open>
         <summary>Divinci account (staging) — recommended</summary>
-        <div class="setting-row setting-row-checkbox">
+        <div class="setting-row setting-row-checkbox" hidden>
           <label for="setting-use-divinci-account" title="Proxy tool-calling through your signed-in Divinci account instead of pasting Cloudflare/Brave/Serper tokens.">Use my Divinci account</label>
           <input type="checkbox" id="setting-use-divinci-account" />
         </div>

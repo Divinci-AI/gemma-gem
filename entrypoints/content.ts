@@ -31,11 +31,13 @@ import {
   DEFAULT_MODEL_ID,
   type ModelId,
 } from '@/shared/models'
+import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import type {
   DivinciExternalEvent,
   DivinciExternalRequest,
   InternalStatusResponse,
   InternalPageCheckResponse,
+  InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
@@ -95,6 +97,10 @@ function mountSidebar(
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusPill: root.querySelector<HTMLElement>('.dls-status-pill')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
+    modelChip: root.querySelector<HTMLElement>('.dls-model-chip')!,
+    accountChip: root.querySelector<HTMLElement>('.dls-account-chip')!,
+    accountAvatar: root.querySelector<HTMLImageElement>('.dls-account-avatar')!,
+    accountLabel: root.querySelector<HTMLElement>('.dls-account-label')!,
     loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
     loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
     loadHint: root.querySelector<HTMLElement>('.dls-load-hint')!,
@@ -107,6 +113,7 @@ function mountSidebar(
     send: root.querySelector<HTMLButtonElement>('.dls-send')!,
   }
   el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
+  el.modelChip.textContent = MODELS[MODEL_ID].label
 
   // ---- State --------------------------------------------------------------
   const history: ChatMessage[] = []
@@ -167,6 +174,45 @@ function mountSidebar(
     } catch {
       /* extension context gone; ctx.onInvalidated will tear us down */
     }
+  }
+
+  // ---- Divinci account chip (signed-in state) -----------------------------
+  // The SW answers internal:divinci-auth-status; render a tiny avatar + email
+  // when signed in, "Local only" when not. Values via textContent / img.src.
+  function queryAccountStatus(): void {
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'internal:divinci-auth-status' },
+        (resp: InternalDivinciAuthStatusResponse | undefined) => {
+          void chrome.runtime.lastError
+          if (resp) renderAccountChip(resp)
+        },
+      )
+    } catch {
+      /* extension context gone */
+    }
+  }
+
+  function renderAccountChip(resp: InternalDivinciAuthStatusResponse): void {
+    if (!resp.signedIn) {
+      el.accountChip.dataset.state = 'signed-out'
+      el.accountAvatar.hidden = true
+      el.accountAvatar.removeAttribute('src')
+      el.accountLabel.textContent = 'Local only'
+      return
+    }
+    el.accountChip.dataset.state = 'signed-in'
+    if (resp.picture) {
+      el.accountAvatar.src = resp.picture
+      el.accountAvatar.hidden = false
+      el.accountAvatar.onerror = () => {
+        el.accountAvatar.hidden = true
+      }
+    } else {
+      el.accountAvatar.hidden = true
+      el.accountAvatar.removeAttribute('src')
+    }
+    el.accountLabel.textContent = resp.email || 'Signed in'
   }
 
   // ---- Page indexing status ------------------------------------------------
@@ -475,6 +521,7 @@ function mountSidebar(
       ensurePort()
       send({ type: 'divinci:ping' }) // exercise the fresh connection
       queryStatus()
+      queryAccountStatus()
       startPolling()
       setTimeout(() => el.input.focus(), 60)
     } else {
@@ -512,7 +559,10 @@ function mountSidebar(
     changes: Record<string, chrome.storage.StorageChange>,
     area: string,
   ): void => {
-    if (area !== 'local' || !(STORAGE_KEY_OPEN in changes)) return
+    if (area !== 'local') return
+    // Live-update the account chip when the SW writes/clears the token bundle.
+    if (STORAGE_KEY_DIVINCI_AUTH in changes) queryAccountStatus()
+    if (!(STORAGE_KEY_OPEN in changes)) return
     const open = changes[STORAGE_KEY_OPEN].newValue === true
     if (open !== root.classList.contains('dls-open')) setOpen(open, false)
   }
@@ -578,6 +628,14 @@ const TEMPLATE = /* html */ `
       </div>
       <button class="dls-close" aria-label="Close">×</button>
     </header>
+
+    <div class="dls-chips">
+      <span class="dls-model-chip"></span>
+      <span class="dls-account-chip" data-state="signed-out">
+        <img class="dls-account-avatar" alt="" width="16" height="16" hidden />
+        <span class="dls-account-label">Local only</span>
+      </span>
+    </div>
 
     <div class="dls-load-card">
       <button class="dls-load-btn">Load model</button>
@@ -697,6 +755,50 @@ const SIDEBAR_CSS = /* css */ `
     padding: 0 4px;
   }
   .dls-close:hover { color: var(--dls-text); }
+
+  .dls-chips {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--dls-border);
+  }
+  .dls-model-chip {
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    background: var(--dls-bg-2);
+    color: var(--dls-muted);
+  }
+  .dls-account-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    max-width: 60%;
+    font-size: 10px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    color: var(--dls-muted);
+  }
+  .dls-account-chip[data-state="signed-in"] { color: #7ee2a8; border-color: #2c4636; }
+  .dls-account-avatar {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .dls-account-avatar[hidden] { display: none; }
+  .dls-account-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
   .dls-load-card {
     padding: 14px;

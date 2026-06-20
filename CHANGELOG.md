@@ -7,6 +7,19 @@ content scripts; this fork is a pure LLM transport for chat.divinci.app
 via `chrome.runtime.connect` over an `externally_connectable` port.
 See README for the architecture; STORE_LISTING.md for the CWS draft.
 
+## 0.4.0 (2026-06-19)
+
+- Prominent Divinci sign-in in the popup **header**: signed-out shows a
+  "Sign in with Divinci" button; signed-in shows a circular Auth0 avatar →
+  dropdown with name + email + "Sign out". Avatar/name/email now decoded from
+  the id_token (`picture`/`name` claims via `decodeJwtProfile`).
+- "Use my Divinci account" checkbox is now **conditional** — only shown when
+  signed in AND manual tool credentials (CF/Brave/Serper) are present (i.e.
+  there's an actual account-vs-manual choice); hidden otherwise.
+- In-page sidebar dock now shows a **model chip** (current LLM) and an
+  **account chip** (signed-in avatar + email, or "Local only"), live-updated
+  via the OAuth-token storage key.
+
 ## 0.3.0 (2026-06-19)
 
 - Tool APIs: Kimi K2.7-Code tool-calling with web search, with a manual

@@ -47,10 +47,22 @@ const els = {
   braveApiKeyInput: document.getElementById('setting-brave-api-key') as HTMLInputElement,
   serperApiKeyInput: document.getElementById('setting-serper-api-key') as HTMLInputElement,
   useAccountToggle: document.getElementById('setting-use-divinci-account') as HTMLInputElement,
+  useAccountRow: document.querySelector<HTMLElement>('.setting-row-checkbox')!,
   signinBtn: document.getElementById('divinci-signin-btn') as HTMLButtonElement,
   authStatus: document.getElementById('divinci-auth-status')!,
   workspaceIdInput: document.getElementById('setting-divinci-workspace-id') as HTMLInputElement,
   releaseIdInput: document.getElementById('setting-divinci-release-id') as HTMLInputElement,
+  // Header account widget
+  headerSigninBtn: document.getElementById('header-signin-btn') as HTMLButtonElement,
+  headerAvatarBtn: document.getElementById('header-avatar-btn') as HTMLButtonElement,
+  headerAvatar: document.getElementById('header-avatar') as HTMLImageElement,
+  headerAvatarFallback: document.getElementById('header-avatar-fallback')!,
+  headerAccountMenu: document.getElementById('header-account-menu')!,
+  headerMenuAvatar: document.getElementById('header-menu-avatar') as HTMLImageElement,
+  headerMenuAvatarFallback: document.getElementById('header-menu-avatar-fallback')!,
+  headerName: document.getElementById('header-name')!,
+  headerEmail: document.getElementById('header-email')!,
+  headerSignoutBtn: document.getElementById('header-signout-btn') as HTMLButtonElement,
 }
 
 // Track which inputs the user has touched so we don't fight their typing
@@ -329,10 +341,14 @@ async function loadToolApiCredentials(): Promise<void> {
   els.cfApiTokenInput.value = settings?.cfApiToken ?? ''
   els.braveApiKeyInput.value = settings?.braveApiKey ?? ''
   els.serperApiKeyInput.value = settings?.serperApiKey ?? ''
+  updateUseAccountRowVisibility()
 }
 
 for (const input of [els.cfAccountIdInput, els.cfApiTokenInput, els.braveApiKeyInput, els.serperApiKeyInput]) {
-  input.addEventListener('input', () => { void sendToolApiCredentials() })
+  input.addEventListener('input', () => {
+    void sendToolApiCredentials()
+    updateUseAccountRowVisibility()
+  })
 }
 
 // ---- Divinci account (OAuth) -------------------------------------------
@@ -355,8 +371,65 @@ async function loadAccountSettings(): Promise<void> {
   els.releaseIdInput.value = s?.divinciReleaseId ?? ''
 }
 
+// Last known auth status — used by the conditional-checkbox logic so it can
+// recompute on tool-credential input events without re-querying the SW.
+let lastAuthSignedIn = false
+
+/** First letter for the avatar fallback circle, from name then email. */
+function avatarInitial(resp: InternalDivinciAuthStatusResponse | null): string {
+  const src = resp?.name?.trim() || resp?.email?.trim() || ''
+  return src ? src.charAt(0) : '?'
+}
+
+/**
+ * Render an avatar pair (img + fallback circle). When `picture` is present we
+ * show the img; otherwise we hide it and show a circle with the first letter.
+ * An img load error also falls back to the circle (set once per render).
+ */
+function renderAvatar(
+  img: HTMLImageElement,
+  fallback: HTMLElement,
+  picture: string | undefined,
+  initial: string,
+): void {
+  fallback.textContent = initial
+  if (picture) {
+    img.src = picture
+    img.hidden = false
+    fallback.hidden = true
+    img.onerror = () => {
+      img.hidden = true
+      fallback.hidden = false
+    }
+  } else {
+    img.removeAttribute('src')
+    img.hidden = true
+    fallback.hidden = false
+  }
+}
+
+/** Render the prominent header account widget (sign-in button OR avatar+menu). */
+function renderHeaderAccount(resp: InternalDivinciAuthStatusResponse | null): void {
+  const signedIn = Boolean(resp?.signedIn)
+  if (!signedIn) {
+    els.headerSigninBtn.hidden = false
+    els.headerAvatarBtn.hidden = true
+    els.headerAccountMenu.hidden = true
+    els.headerAvatarBtn.setAttribute('aria-expanded', 'false')
+    return
+  }
+  els.headerSigninBtn.hidden = true
+  els.headerAvatarBtn.hidden = false
+  const initial = avatarInitial(resp)
+  renderAvatar(els.headerAvatar, els.headerAvatarFallback, resp?.picture, initial)
+  renderAvatar(els.headerMenuAvatar, els.headerMenuAvatarFallback, resp?.picture, initial)
+  els.headerName.textContent = resp?.name ?? 'Divinci account'
+  els.headerEmail.textContent = resp?.email ?? ''
+}
+
 function renderAuthStatus(resp: InternalDivinciAuthStatusResponse | null): void {
   const signedIn = Boolean(resp?.signedIn)
+  lastAuthSignedIn = signedIn
   els.signinBtn.textContent = signedIn ? 'Sign out' : 'Sign in with Divinci'
   if (resp?.error) {
     els.authStatus.textContent = `Sign-in failed: ${resp.error}`
@@ -365,6 +438,8 @@ function renderAuthStatus(resp: InternalDivinciAuthStatusResponse | null): void 
   } else {
     els.authStatus.textContent = 'Not signed in.'
   }
+  renderHeaderAccount(resp)
+  updateUseAccountRowVisibility()
 }
 
 async function refreshAuthStatus(): Promise<void> {
@@ -373,6 +448,62 @@ async function refreshAuthStatus(): Promise<void> {
   })
   renderAuthStatus(resp)
 }
+
+// ---- Conditional "Use my Divinci account" checkbox (Item 3) -------------
+// The choice only matters when signed in AND at least one manual tool
+// credential is present (account-vs-manual). Otherwise hide the row: signed
+// out (no account path), or signed in with no manual creds (account is the
+// only path — treated as active regardless).
+function hasManualCreds(): boolean {
+  return Boolean(
+    els.cfApiTokenInput.value.trim() ||
+      els.braveApiKeyInput.value.trim() ||
+      els.serperApiKeyInput.value.trim(),
+  )
+}
+
+function updateUseAccountRowVisibility(): void {
+  els.useAccountRow.hidden = !(lastAuthSignedIn && hasManualCreds())
+}
+
+// Toggle the header account menu open/closed.
+els.headerAvatarBtn.addEventListener('click', () => {
+  const open = els.headerAccountMenu.hidden
+  els.headerAccountMenu.hidden = !open
+  els.headerAvatarBtn.setAttribute('aria-expanded', String(open))
+})
+
+// Close the menu on any outside click.
+document.addEventListener('click', (e) => {
+  if (els.headerAccountMenu.hidden) return
+  const target = e.target as Node
+  if (els.headerAvatarBtn.contains(target) || els.headerAccountMenu.contains(target)) return
+  els.headerAccountMenu.hidden = true
+  els.headerAvatarBtn.setAttribute('aria-expanded', 'false')
+})
+
+// Header sign-in / sign-out wire to the SAME messages the section uses.
+els.headerSigninBtn.addEventListener('click', async () => {
+  els.headerSigninBtn.disabled = true
+  els.headerSigninBtn.textContent = 'Opening Divinci sign-in…'
+  const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
+    type: 'internal:divinci-signin',
+  })
+  els.headerSigninBtn.disabled = false
+  els.headerSigninBtn.textContent = 'Sign in with Divinci'
+  renderAuthStatus(resp)
+})
+
+els.headerSignoutBtn.addEventListener('click', async () => {
+  els.headerSignoutBtn.disabled = true
+  const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
+    type: 'internal:divinci-signout',
+  })
+  els.headerSignoutBtn.disabled = false
+  els.headerAccountMenu.hidden = true
+  els.headerAvatarBtn.setAttribute('aria-expanded', 'false')
+  renderAuthStatus(resp)
+})
 
 els.signinBtn.addEventListener('click', async () => {
   const status = await sendInternal<InternalDivinciAuthStatusResponse>({

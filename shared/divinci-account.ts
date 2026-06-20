@@ -37,6 +37,10 @@ export interface DivinciAuthTokens {
   expiresAt: number
   /** Cached from the id_token for display in the popup. */
   email?: string
+  /** Display name from the id_token's `name` claim, for the popup avatar/menu. */
+  name?: string
+  /** Avatar URL from the id_token's `picture` claim, for the popup avatar. */
+  picture?: string
 }
 
 // ---- /authorize ----
@@ -116,17 +120,49 @@ export function parseTokenResponse(
 ): DivinciAuthTokens {
   if (!raw.access_token) throw new Error('Token response missing access_token')
   const expiresInMs = (raw.expires_in ?? 3600) * 1000
+  const profile = raw.id_token ? decodeJwtProfile(raw.id_token) : {}
   return {
     accessToken: raw.access_token,
     refreshToken: raw.refresh_token ?? prevRefreshToken,
     expiresAt: nowMs + expiresInMs,
-    email: raw.id_token ? decodeJwtEmail(raw.id_token) : undefined,
+    email: profile.email,
+    name: profile.name,
+    picture: profile.picture,
   }
 }
 
 /** True when the access token is expired (or within the skew window). */
 export function isAccessTokenExpired(tokens: DivinciAuthTokens, nowMs: number): boolean {
   return nowMs >= tokens.expiresAt - TOKEN_EXPIRY_SKEW_MS
+}
+
+/**
+ * Best-effort decode of the display-relevant claims from a JWT id_token. The
+ * token is NOT verified here — we only read claims for UI display. Defensive:
+ * any malformed input yields an empty object.
+ */
+export function decodeJwtProfile(idToken: string): {
+  email?: string
+  name?: string
+  picture?: string
+} {
+  try {
+    const payload = idToken.split('.')[1]
+    if (!payload) return {}
+    const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'))
+    const claims = JSON.parse(json) as {
+      email?: string
+      name?: string
+      picture?: string
+    }
+    return {
+      email: typeof claims.email === 'string' ? claims.email : undefined,
+      name: typeof claims.name === 'string' ? claims.name : undefined,
+      picture: typeof claims.picture === 'string' ? claims.picture : undefined,
+    }
+  } catch {
+    return {}
+  }
 }
 
 /** Best-effort extract of the `email` (or `name`/`sub`) claim from a JWT id_token. */
