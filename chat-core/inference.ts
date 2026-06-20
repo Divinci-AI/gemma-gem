@@ -53,12 +53,14 @@ export interface InferenceRequest {
 }
 
 export interface InferenceResult {
-  /** The final assistant text. */
+  /** The final assistant text (partial when aborted). */
   text: string
   tokensGenerated?: number
   durationMs?: number
   /** Tool calls surfaced from the turn, when any. */
   toolCalls?: ChatToolCall[]
+  /** True when the turn was cancelled via the request's AbortSignal. */
+  aborted?: boolean
 }
 
 /**

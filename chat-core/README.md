@@ -44,12 +44,18 @@ Gaps that don't fit the SDK cleanly stay custom (e.g. the offscreen
 `LocalInference` is inherently extension-specific).
 
 ## Extraction order (incremental, keep green at each step)
-1. Land these contracts (done).
-2. `LocalInference` — wrap the existing offscreen port; route the sidebar's
-   send through it (no behavior change).
-3. `AccountInference` — SDK-backed (fill gap #1 first); fold in the current
-   account-mode branch from `finalize-chat.ts`.
-4. `ChatController` — move the sidebar's send/stream/history logic in; sidebar
-   becomes a renderer. Popup chat (if any) follows.
-5. `LocalTranscriptStore` (IndexedDB) + `AccountTranscriptStore` (SDK, after
+1. ✅ Contracts (`inference.ts`, `transcript-store.ts`).
+2. ✅ `LocalInference` (`local-inference.ts`) — transport-injected `InferenceClient`
+   over the offscreen port; the request/stream/done/abort/error protocol from
+   `content.ts`, unit-tested with a fake transport.
+3. ✅ `ChatController` (`chat-controller.ts`) — transcript + turn orchestration +
+   events; unit-tested with a stub inference.
+4. ⏭ **NEXT: wire the sidebar to delegate.** `content.ts` provides a port-backed
+   `LocalTransport`, constructs `LocalInference` + a `ChatController`, and becomes
+   a renderer of controller events (drops its inline send/stream/history logic).
+   Behavior-preserving. Do this as its own pass to avoid churn with live UI edits.
+5. `AccountInference` — SDK-backed (`@divinci-ai/server`, fill gap #1 first); fold
+   in the current account-mode branch from `finalize-chat.ts`. The controller
+   swaps backends via `setInference`.
+6. `LocalTranscriptStore` (IndexedDB) + `AccountTranscriptStore` (SDK, after
    gap #2) → unblocks §1 page-wide chat.
