@@ -101,14 +101,15 @@ export class LocalTranscriptStore implements TranscriptStore {
     await this.backend.put(conv)
   }
 
-  /** Record account-mirror progress (server transcript id + dedupe offset). */
+  /** Record account-mirror progress (AIChat id + transcript id + dedupe offset). */
   async setMirrorState(
     id: string,
-    state: { serverTranscriptId: string; mirroredCount: number },
+    state: { serverChatId: string; serverTranscriptId?: string; mirroredCount: number },
   ): Promise<void> {
     const conv = await this.backend.get(id)
     if (!conv) return
-    conv.serverTranscriptId = state.serverTranscriptId
+    conv.serverChatId = state.serverChatId
+    if (state.serverTranscriptId) conv.serverTranscriptId = state.serverTranscriptId
     conv.mirroredCount = state.mirroredCount
     await this.backend.put(conv)
   }

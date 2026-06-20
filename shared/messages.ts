@@ -346,15 +346,16 @@ export interface InternalAccountChatResponse {
 
 /**
  * Sidebar → SW: mirror a local conversation's unmirrored tail to the user's
- * Divinci account (create the transcript on first mirror, then batch-ingest the
- * messages verbatim — no inference). The SW resolves the workspace + token; it
- * skips silently when not signed in / no workspace configured.
+ * Divinci account as an AIChat (create the chat on first mirror, then
+ * batch-ingest the messages verbatim — no inference). AIChats are owner-scoped
+ * (no workspace needed), appear in the web app's chat list, and are shareable.
+ * The SW resolves the token; it skips silently when not signed in.
  */
 export interface InternalAccountMirrorRequest {
   type: 'internal:account-mirror'
   title: string
-  /** Existing server transcript id, if this conversation was already mirrored. */
-  serverTranscriptId?: string
+  /** Existing server AIChat id, if this conversation was already mirrored. */
+  serverChatId?: string
   items: Array<{
     role: 'system' | 'assistant' | 'user' | 'error' | 'social'
     content: string
@@ -362,12 +363,33 @@ export interface InternalAccountMirrorRequest {
   }>
 }
 
-/** SW → sidebar: mirror result. `skipped` = couldn't (not signed in / no workspace). */
+/** SW → sidebar: mirror result. `skipped` = couldn't (not signed in). */
 export interface InternalAccountMirrorResponse {
   type: 'internal:account-mirror-response'
   ok: boolean
+  /** The AIChat id (reuse key for the next mirror + the share action). */
+  serverChatId?: string
+  /** The AIChat's transcript id (reference / future import). */
   serverTranscriptId?: string
-  skipped?: 'not-signed-in' | 'no-workspace'
+  skipped?: 'not-signed-in'
+  error?: string
+}
+
+/**
+ * Sidebar → SW: mint (or fetch the existing) public share link for an AIChat
+ * that was already mirrored to the account. Returns the embed viewer URL.
+ */
+export interface InternalAccountShareRequest {
+  type: 'internal:account-share'
+  serverChatId: string
+}
+
+/** SW → sidebar: share result. `skipped` = not signed in. */
+export interface InternalAccountShareResponse {
+  type: 'internal:account-share-response'
+  ok: boolean
+  shareUrl?: string
+  skipped?: 'not-signed-in'
   error?: string
 }
 
@@ -498,6 +520,7 @@ export type InternalRequest =
   | InternalDivinciAuthStatusRequest
   | InternalAccountChatRequest
   | InternalAccountMirrorRequest
+  | InternalAccountShareRequest
   | InternalOpenPopupRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */

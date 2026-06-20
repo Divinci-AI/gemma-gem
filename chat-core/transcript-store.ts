@@ -36,7 +36,10 @@ export interface ConversationSummary {
   title: string
   createdAt: number
   updatedAt: number
-  /** Set once mirrored/imported to the account; absent = local-only. */
+  /** The account AIChat id, set once mirrored; reuse key for the next mirror +
+   * the share action. Absent = not yet mirrored (local-only). */
+  serverChatId?: string
+  /** The mirrored AIChat's transcript id (reference / future import). */
   serverTranscriptId?: string
   /** How many messages have already been mirrored to the account (the dedupe
    * offset — the next mirror sends messages[mirroredCount..]). */

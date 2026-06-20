@@ -24,9 +24,7 @@ function mkRes(status: number, bodyObj: unknown) {
 const fetchMock = vi.fn()
 ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
 
-import { accountChat, mirrorConversation } from '@/background/divinci-auth'
-
-const SETTINGS_KEY = 'divinci_local_settings'
+import { accountChat, mirrorConversation, shareConversation } from '@/background/divinci-auth'
 
 const COMPLETION = { choices: [{ message: { content: 'the answer' } }], transcriptId: 'T1' }
 
@@ -133,45 +131,64 @@ describe('mirrorConversation', () => {
     ...over,
   })
 
-  it('skips (no-workspace) when no workspace is configured, without fetching', async () => {
-    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
-    const r = await mirrorConversation(mirrorReq())
-    expect(r).toMatchObject({ ok: false, skipped: 'no-workspace' })
-    expect(fetchMock).not.toHaveBeenCalled()
-  })
-
-  it('skips (not-signed-in) when a workspace is set but no token', async () => {
-    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
+  it('skips (not-signed-in) when no token is stored, without fetching', async () => {
     const r = await mirrorConversation(mirrorReq())
     expect(r).toMatchObject({ ok: false, skipped: 'not-signed-in' })
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('creates a transcript then batch-ingests when not yet mirrored', async () => {
+  it('creates an AIChat then batch-ingests when not yet mirrored', async () => {
     store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
-    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
     fetchMock.mockImplementation(async (url: string) =>
-      url.includes('/message/batch')
+      String(url).includes('/message/batch')
         ? mkRes(200, { status: 'ok', inserted: 2 })
-        : mkRes(201, { _id: 'srv1' }),
+        : mkRes(200, { chat: { _id: 'c1' }, transcript: { _id: 't1' } }),
     )
     const r = await mirrorConversation(mirrorReq())
-    expect(r).toMatchObject({ ok: true, serverTranscriptId: 'srv1' })
-    const created = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/transcript/'))
+    expect(r).toMatchObject({ ok: true, serverChatId: 'c1', serverTranscriptId: 't1' })
+    const created = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/ai-chat/'))
     const ingested = fetchMock.mock.calls.find((c) => String(c[0]).includes('/message/batch'))
     expect(created).toBeDefined()
     expect(ingested).toBeDefined()
-    // ingest targets the created transcript id
-    expect(String(ingested![0])).toContain('/transcript/srv1/message/batch')
+    // ingest targets the created AIChat id
+    expect(String(ingested![0])).toContain('/ai-chat/c1/message/batch')
   })
 
-  it('reuses an existing serverTranscriptId (no create, only ingest)', async () => {
+  it('reuses an existing serverChatId (no create, only ingest)', async () => {
     store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
-    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
     fetchMock.mockResolvedValue(mkRes(200, { status: 'ok', inserted: 2 }))
-    const r = await mirrorConversation(mirrorReq({ serverTranscriptId: 'srvX' }))
-    expect(r).toMatchObject({ ok: true, serverTranscriptId: 'srvX' })
+    const r = await mirrorConversation(mirrorReq({ serverChatId: 'cX' }))
+    expect(r).toMatchObject({ ok: true, serverChatId: 'cX' })
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(String(fetchMock.mock.calls[0][0])).toContain('/transcript/srvX/message/batch')
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/ai-chat/cX/message/batch')
+  })
+})
+
+describe('shareConversation', () => {
+  const shareReq = { type: 'internal:account-share' as const, serverChatId: 'c1' }
+
+  it('skips (not-signed-in) when no token is stored, without fetching', async () => {
+    const r = await shareConversation(shareReq)
+    expect(r).toMatchObject({ ok: false, skipped: 'not-signed-in' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('POSTs to the share endpoint and returns the embed viewer URL', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
+    fetchMock.mockResolvedValue(mkRes(200, { shareToken: 'tok9', sharedAt: 1 }))
+    const r = await shareConversation(shareReq)
+    expect(r).toMatchObject({
+      ok: true,
+      shareUrl: 'https://embed.stage.divinci.app/chat/shared/tok9',
+    })
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/ai-chat/c1/share')
+  })
+
+  it('surfaces a server error', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
+    fetchMock.mockResolvedValue(mkRes(403, { error: 'not owner' }))
+    const r = await shareConversation(shareReq)
+    expect(r.ok).toBe(false)
+    expect(r.error).toMatch(/server 403/)
   })
 })

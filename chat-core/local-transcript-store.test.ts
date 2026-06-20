@@ -83,13 +83,14 @@ describe('LocalTranscriptStore', () => {
     expect((await store.get(c.id))!.serverTranscriptId).toBe('srv-123')
   })
 
-  it('records mirror state (serverTranscriptId + mirroredCount)', async () => {
+  it('records mirror state (serverChatId + serverTranscriptId + mirroredCount)', async () => {
     const store = makeStore()
     const c = await store.create()
     await store.appendMessage(c.id, { role: 'user', content: 'a' })
     await store.appendMessage(c.id, { role: 'assistant', content: 'b' })
-    await store.setMirrorState(c.id, { serverTranscriptId: 'srv-9', mirroredCount: 2 })
+    await store.setMirrorState(c.id, { serverChatId: 'chat-9', serverTranscriptId: 'srv-9', mirroredCount: 2 })
     const got = await store.get(c.id)
+    expect(got!.serverChatId).toBe('chat-9')
     expect(got!.serverTranscriptId).toBe('srv-9')
     expect(got!.mirroredCount).toBe(2)
   })

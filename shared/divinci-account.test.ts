@@ -11,11 +11,14 @@ import {
   buildChatCompletionsBody,
   parseChatCompletion,
   parseChatCompletionResult,
-  buildCreateTranscriptUrl,
-  buildCreateTranscriptBody,
-  parseCreatedTranscriptId,
-  buildIngestBatchUrl,
+  buildCreateChatUrl,
+  buildCreateChatBody,
+  parseCreatedChat,
+  buildChatIngestUrl,
   buildIngestBatchBody,
+  buildShareApiUrl,
+  parseShareToken,
+  buildPublicShareLink,
   TOKEN_EXPIRY_SKEW_MS,
 } from '@/shared/divinci-account'
 
@@ -146,20 +149,23 @@ describe('parseChatCompletion', () => {
   })
 })
 
-describe('account transcript mirror shaping', () => {
-  it('builds the /white-label create + ingest URLs', () => {
-    expect(buildCreateTranscriptUrl('ws1')).toBe('https://api.stage.divinci.app/white-label/ws1/transcript/')
-    expect(buildIngestBatchUrl('ws1', 't9')).toBe(
-      'https://api.stage.divinci.app/white-label/ws1/transcript/t9/message/batch',
-    )
+describe('account AIChat mirror shaping', () => {
+  it('builds the /ai-chat create + ingest + share URLs', () => {
+    expect(buildCreateChatUrl()).toBe('https://api.stage.divinci.app/ai-chat/')
+    expect(buildChatIngestUrl('c9')).toBe('https://api.stage.divinci.app/ai-chat/c9/message/batch')
+    expect(buildShareApiUrl('c9')).toBe('https://api.stage.divinci.app/ai-chat/c9/share')
   })
-  it('create body carries a title (with fallback)', () => {
-    expect(JSON.parse(buildCreateTranscriptBody('Sky lights'))).toEqual({ title: 'Sky lights' })
-    expect(JSON.parse(buildCreateTranscriptBody(''))).toEqual({ title: 'Chat' })
+  it('create body carries a title (with fallback) + empty releases', () => {
+    expect(JSON.parse(buildCreateChatBody('Sky lights'))).toEqual({ title: 'Sky lights', releases: [] })
+    expect(JSON.parse(buildCreateChatBody(''))).toEqual({ title: 'Chat', releases: [] })
   })
-  it('parseCreatedTranscriptId reads _id (throws if absent)', () => {
-    expect(parseCreatedTranscriptId({ _id: 'abc', title: 'x' })).toBe('abc')
-    expect(() => parseCreatedTranscriptId({})).toThrow(/_id/)
+  it('parseCreatedChat reads chat._id + transcript._id (throws if absent)', () => {
+    expect(parseCreatedChat({ chat: { _id: 'c1' }, transcript: { _id: 't1' } })).toEqual({
+      chatId: 'c1',
+      transcriptId: 't1',
+    })
+    expect(() => parseCreatedChat({ transcript: { _id: 't1' } })).toThrow(/chat\._id/)
+    expect(() => parseCreatedChat({ chat: { _id: 'c1' } })).toThrow(/transcript\._id/)
   })
   it('ingest body wraps verbatim items under { items }', () => {
     const body = JSON.parse(
@@ -168,5 +174,12 @@ describe('account transcript mirror shaping', () => {
     expect(body).toEqual({
       items: [{ role: 'user', content: 'hi', timestamp: 5 }, { role: 'assistant', content: 'yo' }],
     })
+  })
+  it('parseShareToken reads shareToken (throws if absent)', () => {
+    expect(parseShareToken({ shareToken: 'tok123', sharedAt: 1 })).toBe('tok123')
+    expect(() => parseShareToken({})).toThrow(/shareToken/)
+  })
+  it('builds the embed viewer public share link', () => {
+    expect(buildPublicShareLink('tok123')).toBe('https://embed.stage.divinci.app/chat/shared/tok123')
   })
 })

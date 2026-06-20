@@ -26,11 +26,14 @@ import {
   buildChatCompletionsUrl,
   buildChatCompletionsBody,
   parseChatCompletionResult,
-  buildCreateTranscriptUrl,
-  buildCreateTranscriptBody,
-  parseCreatedTranscriptId,
-  buildIngestBatchUrl,
+  buildCreateChatUrl,
+  buildCreateChatBody,
+  parseCreatedChat,
+  buildChatIngestUrl,
   buildIngestBatchBody,
+  buildShareApiUrl,
+  parseShareToken,
+  buildPublicShareLink,
 } from '@/shared/divinci-account'
 import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
 import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
@@ -41,6 +44,8 @@ import type {
   InternalAccountChatResponse,
   InternalAccountMirrorRequest,
   InternalAccountMirrorResponse,
+  InternalAccountShareRequest,
+  InternalAccountShareResponse,
 } from '@/shared/messages'
 
 // ---- token storage ----
@@ -286,56 +291,47 @@ async function readAllowChatDataUse(): Promise<boolean> {
   }
 }
 
-// ---- account transcript mirror (save signed-in chats to Divinci) ----------
-
-async function readMirrorWorkspaceId(): Promise<string | undefined> {
-  try {
-    const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
-    const s = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
-    return s?.divinciWorkspaceId || undefined
-  } catch {
-    return undefined
-  }
-}
+// ---- account AIChat mirror (save signed-in chats to Divinci) ---------------
 
 /**
- * Mirror a local conversation's tail to the user's Divinci account: create the
- * transcript on first mirror, then batch-ingest the messages verbatim (no
- * inference). Uses the OAuth-capable /white-label routes the web client uses.
- * Skips silently when not signed in or no workspace is configured.
+ * Mirror a local conversation's tail to the user's Divinci account as an
+ * AIChat: create the chat on first mirror, then batch-ingest the messages
+ * verbatim (no inference). AIChats are owner-scoped — no workspace needed —
+ * so they appear in the web app's chat list and can be publicly shared.
+ * Skips silently when not signed in.
  */
 export async function mirrorConversation(
   req: InternalAccountMirrorRequest,
 ): Promise<InternalAccountMirrorResponse> {
   const RESP = 'internal:account-mirror-response' as const
   try {
-    const workspaceId = await readMirrorWorkspaceId()
-    if (!workspaceId) return { type: RESP, ok: false, skipped: 'no-workspace' }
-
-    let transcriptId = req.serverTranscriptId
-    if (!transcriptId) {
-      const created = await authedFetch(buildCreateTranscriptUrl(workspaceId), {
+    let chatId = req.serverChatId
+    let transcriptId: string | undefined
+    if (!chatId) {
+      const created = await authedFetch(buildCreateChatUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: buildCreateTranscriptBody(req.title),
+        body: buildCreateChatBody(req.title),
       })
       if (!created.ok) {
         return created.signedOut
           ? { type: RESP, ok: false, skipped: 'not-signed-in' }
-          : { type: RESP, ok: false, error: created.error ?? 'create-transcript failed' }
+          : { type: RESP, ok: false, error: created.error ?? 'create-chat failed' }
       }
       if ((created.status ?? 0) >= 400) {
         return { type: RESP, ok: false, error: `server ${created.status}: ${(created.text ?? '').substring(0, 160)}` }
       }
       try {
-        transcriptId = parseCreatedTranscriptId(JSON.parse(created.text ?? ''))
+        const ids = parseCreatedChat(JSON.parse(created.text ?? ''))
+        chatId = ids.chatId
+        transcriptId = ids.transcriptId
       } catch (e) {
         return { type: RESP, ok: false, error: (e as Error).message }
       }
     }
 
     if (req.items.length > 0) {
-      const ing = await authedFetch(buildIngestBatchUrl(workspaceId, transcriptId), {
+      const ing = await authedFetch(buildChatIngestUrl(chatId), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: buildIngestBatchBody(req.items),
@@ -350,7 +346,41 @@ export async function mirrorConversation(
       }
     }
 
-    return { type: RESP, ok: true, serverTranscriptId: transcriptId }
+    return { type: RESP, ok: true, serverChatId: chatId, serverTranscriptId: transcriptId }
+  } catch (err) {
+    return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
+/**
+ * Mint (or fetch the existing) public share link for an already-mirrored
+ * AIChat. Returns the embed viewer URL the user can copy/share. Skips silently
+ * when not signed in.
+ */
+export async function shareConversation(
+  req: InternalAccountShareRequest,
+): Promise<InternalAccountShareResponse> {
+  const RESP = 'internal:account-share-response' as const
+  try {
+    const shared = await authedFetch(buildShareApiUrl(req.serverChatId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    })
+    if (!shared.ok) {
+      return shared.signedOut
+        ? { type: RESP, ok: false, skipped: 'not-signed-in' }
+        : { type: RESP, ok: false, error: shared.error ?? 'share failed' }
+    }
+    if ((shared.status ?? 0) >= 400) {
+      return { type: RESP, ok: false, error: `server ${shared.status}: ${(shared.text ?? '').substring(0, 160)}` }
+    }
+    try {
+      const token = parseShareToken(JSON.parse(shared.text ?? ''))
+      return { type: RESP, ok: true, shareUrl: buildPublicShareLink(token) }
+    } catch (e) {
+      return { type: RESP, ok: false, error: (e as Error).message }
+    }
   } catch (err) {
     return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
   }
@@ -472,6 +502,9 @@ export function setupDivinciAuthBridge(): void {
           return true
         case 'internal:account-mirror':
           void mirrorConversation(msg).then((r) => sendResponse(r))
+          return true
+        case 'internal:account-share':
+          void shareConversation(msg).then((r) => sendResponse(r))
           return true
         default:
           return undefined

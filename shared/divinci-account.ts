@@ -24,6 +24,12 @@ export const DIVINCI_AUTH = {
 /** Staging public API base. The extension is a staging/testing build. */
 export const DIVINCI_API_BASE = 'https://api.stage.divinci.app'
 
+/**
+ * Embed client base, host of the standalone shared-chat viewer
+ * (`/chat/shared/:token`). Matches the web app's `EMBED_CLIENT_URL` for staging.
+ */
+export const EMBED_CLIENT_BASE = 'https://embed.stage.divinci.app'
+
 /** chrome.storage.local key for the OAuth token bundle (SW-owned; never sent to offscreen). */
 export const STORAGE_KEY_DIVINCI_AUTH = 'divinci_oauth_tokens'
 
@@ -258,26 +264,58 @@ export interface MirrorMessage {
   timestamp?: number
 }
 
-export function buildCreateTranscriptUrl(workspaceId: string): string {
-  return `${DIVINCI_API_BASE}/white-label/${encodeURIComponent(workspaceId)}/transcript/`
+// --- AIChat mirror (owner-scoped) ------------------------------------------
+// AIChats are user-owned, NOT white-label-scoped: they show up in the web
+// app's chat list and are shareable via the existing public-share flow. The
+// extension mirrors local/account chats as AIChats so a "share to Divinci"
+// link can be minted, and the conversation is consistent with the web app.
+
+export function buildCreateChatUrl(): string {
+  return `${DIVINCI_API_BASE}/ai-chat/`
 }
 
-export function buildCreateTranscriptBody(title: string): string {
-  return JSON.stringify({ title: title || 'Chat' })
+/** AIChat create body: a plain, release-less owner chat. */
+export function buildCreateChatBody(title: string): string {
+  return JSON.stringify({ title: title || 'Chat', releases: [] })
 }
 
-/** Server returns the new transcript as `{ _id, ... }`. */
-export function parseCreatedTranscriptId(raw: unknown): string {
-  const id = (raw as { _id?: unknown })?._id
-  if (typeof id !== 'string' || !id) throw new Error('create-transcript response had no _id')
-  return id
+/** Server returns `{ chat: { _id }, transcript: { _id } }`. */
+export function parseCreatedChat(raw: unknown): { chatId: string; transcriptId: string } {
+  const chatId = (raw as { chat?: { _id?: unknown } })?.chat?._id
+  const transcriptId = (raw as { transcript?: { _id?: unknown } })?.transcript?._id
+  if (typeof chatId !== 'string' || !chatId) throw new Error('create-chat response had no chat._id')
+  if (typeof transcriptId !== 'string' || !transcriptId) {
+    throw new Error('create-chat response had no transcript._id')
+  }
+  return { chatId, transcriptId }
 }
 
-export function buildIngestBatchUrl(workspaceId: string, transcriptId: string): string {
-  return `${DIVINCI_API_BASE}/white-label/${encodeURIComponent(workspaceId)}/transcript/${encodeURIComponent(transcriptId)}/message/batch`
+/** Verbatim batch-ingest into an AIChat's transcript (no inference). */
+export function buildChatIngestUrl(chatId: string): string {
+  return `${DIVINCI_API_BASE}/ai-chat/${encodeURIComponent(chatId)}/message/batch`
 }
 
 /** `message/batch` body: verbatim items, no inference. */
 export function buildIngestBatchBody(items: MirrorMessage[]): string {
   return JSON.stringify({ items })
+}
+
+/** POST endpoint that mints (or returns the existing) public share token. */
+export function buildShareApiUrl(chatId: string): string {
+  return `${DIVINCI_API_BASE}/ai-chat/${encodeURIComponent(chatId)}/share`
+}
+
+/** Share response: `{ shareToken, sharedAt }`. */
+export function parseShareToken(raw: unknown): string {
+  const t = (raw as { shareToken?: unknown })?.shareToken
+  if (typeof t !== 'string' || !t) throw new Error('share response had no shareToken')
+  return t
+}
+
+/**
+ * Public viewer link, rendered by the embed client's standalone shared-chat
+ * viewer (`/chat/shared/:token`) — matches the web app's PublicShareLink.
+ */
+export function buildPublicShareLink(shareToken: string): string {
+  return `${EMBED_CLIENT_BASE}/chat/shared/${encodeURIComponent(shareToken)}`
 }

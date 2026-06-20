@@ -112,6 +112,7 @@ function mountSidebar(
     shareMenu: root.querySelector<HTMLElement>('.dls-share-menu')!,
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
+    shareLink: root.querySelector<HTMLButtonElement>('.dls-share-link')!,
     newChatBtn: root.querySelector<HTMLButtonElement>('.dls-new-chat')!,
     convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
@@ -192,7 +193,7 @@ function mountSidebar(
     const req: import('@/shared/messages').InternalAccountMirrorRequest = {
       type: 'internal:account-mirror',
       title: conv.title,
-      serverTranscriptId: conv.serverTranscriptId,
+      serverChatId: conv.serverChatId,
       items: tail.map((m) => ({ role: m.role, content: m.content, timestamp: m.createdAt })),
     }
     const resp = await new Promise<
@@ -207,8 +208,9 @@ function mountSidebar(
         resolve(undefined)
       }
     })
-    if (resp?.ok && resp.serverTranscriptId) {
+    if (resp?.ok && resp.serverChatId) {
       await store.setMirrorState(conv.id, {
+        serverChatId: resp.serverChatId,
         serverTranscriptId: resp.serverTranscriptId,
         mirroredCount: conv.messages.length,
       })
@@ -818,6 +820,72 @@ function mountSidebar(
     const next = open ?? el.shareMenu.hidden
     el.shareMenu.hidden = !next
     el.shareBtn.setAttribute('aria-expanded', String(next))
+    if (next) void refreshShareLinkState()
+  }
+
+  /**
+   * The Divinci link is available only once this chat has been mirrored to the
+   * account (signed-in + at least one mirror round → `serverChatId` present).
+   */
+  async function refreshShareLinkState(): Promise<void> {
+    let enabled = false
+    if (accountSignedIn && activeConversationId != null) {
+      const conv = await store.get(activeConversationId)
+      enabled = !!conv?.serverChatId
+    }
+    el.shareLink.disabled = !enabled
+    el.shareLink.title = enabled
+      ? 'Copy a public link to this chat (opens in the Divinci viewer)'
+      : accountSignedIn
+        ? 'Send a message first — this chat syncs to your Divinci account, then a link can be copied'
+        : 'Sign in to sync this chat to your Divinci account, then copy a public share link'
+  }
+
+  /** Mint (or fetch) a public share link for the mirrored AIChat, copy it. */
+  async function shareDivinciLink(): Promise<void> {
+    if (activeConversationId == null) return
+    const conv = await store.get(activeConversationId)
+    if (!conv?.serverChatId) return
+    const prevLabel = el.shareLink.textContent
+    el.shareLink.disabled = true
+    el.shareLink.textContent = 'Creating link…'
+    const req: import('@/shared/messages').InternalAccountShareRequest = {
+      type: 'internal:account-share',
+      serverChatId: conv.serverChatId,
+    }
+    const resp = await new Promise<
+      import('@/shared/messages').InternalAccountShareResponse | undefined
+    >((resolve) => {
+      try {
+        chrome.runtime.sendMessage(req, (r) => {
+          void chrome.runtime.lastError
+          resolve(r)
+        })
+      } catch {
+        resolve(undefined)
+      }
+    })
+    if (resp?.ok && resp.shareUrl) {
+      let copied = false
+      try {
+        await navigator.clipboard.writeText(resp.shareUrl)
+        copied = true
+      } catch {
+        copied = false
+      }
+      el.shareLink.textContent = copied ? 'Link copied ✓' : 'Link ready (copy failed)'
+      window.setTimeout(() => {
+        el.shareLink.textContent = prevLabel
+        el.shareLink.disabled = false
+        toggleShareMenu(false)
+      }, 1400)
+    } else {
+      el.shareLink.textContent = resp?.skipped ? 'Sign in to share' : 'Share failed'
+      window.setTimeout(() => {
+        el.shareLink.textContent = prevLabel
+        el.shareLink.disabled = false
+      }, 1600)
+    }
   }
 
   // ---- Rendering ----------------------------------------------------------
@@ -1022,6 +1090,10 @@ function mountSidebar(
     toggleShareMenu(false)
     void shareDownload('json')
   })
+  el.shareLink.addEventListener('click', () => {
+    if (el.shareLink.disabled) return
+    void shareDivinciLink()
+  })
   // Close the share menu on any click outside it.
   root.addEventListener('click', (e) => {
     if (!el.shareMenu.hidden && !el.shareBtn.contains(e.target as Node) && !el.shareMenu.contains(e.target as Node)) {
@@ -1138,7 +1210,7 @@ const TEMPLATE = /* html */ `
           <div class="dls-share-menu" hidden>
             <button class="dls-share-md" type="button">Download Markdown</button>
             <button class="dls-share-json" type="button">Download JSON</button>
-            <button class="dls-share-link" type="button" disabled title="Sign in and sync this chat to your Divinci account to share a link (coming soon)">Divinci share link — coming soon</button>
+            <button class="dls-share-link" type="button" disabled title="Sign in to sync this chat to your Divinci account, then copy a public share link">Copy Divinci share link</button>
           </div>
         </div>
         <button class="dls-expand" aria-label="Expand to full screen" title="Expand">
