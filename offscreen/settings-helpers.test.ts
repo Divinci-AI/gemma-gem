@@ -81,6 +81,7 @@ describe('clampSettings', () => {
       { temperature: 999, maxNewTokens: 0 },
       DEFAULT_SETTINGS
     )
-    expect(result).toEqual({ temperature: 2, maxNewTokens: 1 })
+    // Non-clamped DEFAULT_SETTINGS fields (the privacy toggles) carry forward.
+    expect(result).toEqual({ ...DEFAULT_SETTINGS, temperature: 2, maxNewTokens: 1 })
   })
 })

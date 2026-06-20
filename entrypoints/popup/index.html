@@ -104,6 +104,26 @@
         </div>
 
         <div class="setting-group">
+          <p class="setting-subhead">Privacy</p>
+          <div class="setting-row setting-row-checkbox">
+            <label for="setting-www-rag-grounding" title="When on, Divinci retrieves indexed context for the page you're viewing to ground the chat.">Retrieve page context</label>
+            <input type="checkbox" id="setting-www-rag-grounding" />
+          </div>
+          <p class="setting-note">
+            Retrieve Divinci page context for this site. When off, page queries
+            never leave your device.
+          </p>
+          <div class="setting-row setting-row-checkbox">
+            <label for="setting-allow-chat-data-use" title="When off, the extension signals Divinci not to use your account chats for service improvement.">Improve Divinci with my chats</label>
+            <input type="checkbox" id="setting-allow-chat-data-use" />
+          </div>
+          <p class="setting-note">
+            Allow Divinci to use my account chats to improve services. The
+            extension only signals this preference to the server.
+          </p>
+        </div>
+
+        <div class="setting-group">
           <p class="setting-subhead">Inference defaults</p>
           <div class="setting-row">
             <label for="setting-temperature" title="0 = deterministic / greedy. >0 enables sampling.">Temperature</label>

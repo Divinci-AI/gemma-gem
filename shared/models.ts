@@ -104,6 +104,21 @@ export interface UserSettings {
    * 'light'/'dark' force it. Applied in the popup (and surfaced to the sidebar).
    */
   theme?: 'system' | 'light' | 'dark'
+  /**
+   * WWW RAG grounding: when true (default), the SW retrieves Divinci page
+   * context for the current site to ground local chat. When false, the
+   * page-context query never leaves the device — the www-rag bridge returns
+   * empty chunks WITHOUT calling the server. Default/undefined = enabled.
+   */
+  wwwRagGrounding?: boolean
+  /**
+   * Allow Divinci to use the user's account chats to improve services. When
+   * false the extension SIGNALS the preference to the server via an
+   * `X-Divinci-Data-Use: none` header on account-mode chat + page-context
+   * fetches. Server-side enforcement is a separate TODO — the extension only
+   * carries the signal. Default/undefined = allowed.
+   */
+  allowChatDataUse?: boolean
 }
 
 /**
@@ -115,6 +130,8 @@ export interface UserSettings {
 export const DEFAULT_SETTINGS: UserSettings = {
   temperature: 0.7,
   maxNewTokens: 512,
+  wwwRagGrounding: true,
+  allowChatDataUse: true,
 }
 
 /**

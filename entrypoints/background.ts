@@ -83,6 +83,10 @@ function setupSettingsPersistence(): void {
         divinciWorkspaceId: m.divinciWorkspaceId ?? prev.divinciWorkspaceId,
         divinciReleaseId: m.divinciReleaseId ?? prev.divinciReleaseId,
         theme: m.theme ?? prev.theme,
+        // ?? keeps a real `false` from being lost; the popup always sends an
+        // explicit boolean for these toggles, so an off-state still persists.
+        wwwRagGrounding: m.wwwRagGrounding ?? prev.wwwRagGrounding,
+        allowChatDataUse: m.allowChatDataUse ?? prev.allowChatDataUse,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -111,6 +115,8 @@ async function hydrateOffscreenSettings(): Promise<void> {
       divinciWorkspaceId: saved.divinciWorkspaceId,
       divinciReleaseId: saved.divinciReleaseId,
       theme: saved.theme,
+      wwwRagGrounding: saved.wwwRagGrounding,
+      allowChatDataUse: saved.allowChatDataUse,
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {
       log.warn('Settings hydrate sendMessage failed:', e)

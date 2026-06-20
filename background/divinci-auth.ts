@@ -28,6 +28,7 @@ import {
   parseChatCompletionResult,
 } from '@/shared/divinci-account'
 import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
+import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
 import type {
   Message,
   InternalDivinciAuthStatusResponse,
@@ -263,6 +264,21 @@ function conversationKey(workspaceId: string, messages: InternalAccountChatReque
   return `${workspaceId}::${hashString(messages[0]?.content ?? '')}`
 }
 
+/**
+ * Read the user's "allow chat data use" preference from chrome.storage. Default
+ * ON: an undefined/never-saved value means data-use is allowed (no opt-out
+ * header). Only an explicit `false` flips it to opted-out.
+ */
+async function readAllowChatDataUse(): Promise<boolean> {
+  try {
+    const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+    const s = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
+    return s?.allowChatDataUse !== false
+  } catch {
+    return true
+  }
+}
+
 export async function accountChat(req: InternalAccountChatRequest): Promise<InternalAccountChatResponse> {
   try {
     let token = await getValidAccessToken()
@@ -276,22 +292,28 @@ export async function accountChat(req: InternalAccountChatRequest): Promise<Inte
       transcriptId: transcriptByConversation.get(convKey),
     })
 
-    let res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body,
-    })
+    // Data-use signal only: when the user has opted out (allowChatDataUse ===
+    // false), tell the server not to use this chat to improve services.
+    // SERVER-SIDE ENFORCEMENT IS A SEPARATE TODO — the extension only signals
+    // the preference; it does not (and cannot) enforce server behaviour.
+    const allowChatDataUse = await readAllowChatDataUse()
+    const headers = (t: string): Record<string, string> => {
+      const h: Record<string, string> = {
+        Authorization: `Bearer ${t}`,
+        'Content-Type': 'application/json',
+      }
+      if (!allowChatDataUse) h['X-Divinci-Data-Use'] = 'none'
+      return h
+    }
+
+    let res = await fetch(url, { method: 'POST', headers: headers(token), body })
 
     // One refresh-and-retry on 401 (token rotated/expired between checks).
     if (res.status === 401) {
       await clearTokenExpiry()
       token = await getValidAccessToken()
       if (token) {
-        res = await fetch(url, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body,
-        })
+        res = await fetch(url, { method: 'POST', headers: headers(token), body })
       }
     }
 

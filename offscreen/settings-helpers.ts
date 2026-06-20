@@ -19,6 +19,7 @@ export function clampSettings(
     cfAccountId?: unknown; cfApiToken?: unknown; braveApiKey?: unknown; serperApiKey?: unknown;
     useDivinciAccount?: unknown; divinciWorkspaceId?: unknown; divinciReleaseId?: unknown;
     theme?: unknown;
+    wwwRagGrounding?: unknown; allowChatDataUse?: unknown;
   },
   current: UserSettings
 ): UserSettings {
@@ -52,6 +53,14 @@ export function clampSettings(
   }
   if (input.theme === 'system' || input.theme === 'light' || input.theme === 'dark') {
     next.theme = input.theme
+  }
+  // Privacy toggles are enforced SW-side, but carry them through here too so the
+  // offscreen's view of settings stays consistent with what the SW persisted.
+  if (typeof input.wwwRagGrounding === 'boolean') {
+    next.wwwRagGrounding = input.wwwRagGrounding
+  }
+  if (typeof input.allowChatDataUse === 'boolean') {
+    next.allowChatDataUse = input.allowChatDataUse
   }
   return next
 }

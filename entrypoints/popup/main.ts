@@ -40,6 +40,8 @@ const els = {
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
   themeSelect: document.getElementById('setting-theme') as HTMLSelectElement,
   showHandleToggle: document.getElementById('setting-show-handle') as HTMLInputElement,
+  wwwRagGroundingToggle: document.getElementById('setting-www-rag-grounding') as HTMLInputElement,
+  allowChatDataUseToggle: document.getElementById('setting-allow-chat-data-use') as HTMLInputElement,
   tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
   maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
   cfAccountIdInput: document.getElementById('setting-cf-account-id') as HTMLInputElement,
@@ -351,6 +353,30 @@ async function loadAccountSettings(): Promise<void> {
   els.releaseIdInput.value = s?.divinciReleaseId ?? ''
 }
 
+// ---- Privacy settings (immediate commit on change) ---------------------
+// Two booleans default to ON (DEFAULT_SETTINGS): undefined (never saved) is
+// treated as enabled, so a fresh user sees both checked.
+function sendPrivacySettings(): void {
+  void sendInternal({
+    type: 'internal:set-settings',
+    wwwRagGrounding: els.wwwRagGroundingToggle.checked,
+    allowChatDataUse: els.allowChatDataUseToggle.checked,
+  })
+}
+
+async function loadPrivacySettings(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+  const s = stored[STORAGE_KEY_SETTINGS] as
+    | { wwwRagGrounding?: boolean; allowChatDataUse?: boolean }
+    | undefined
+  // Default ON: only an explicit false unchecks.
+  els.wwwRagGroundingToggle.checked = s?.wwwRagGrounding !== false
+  els.allowChatDataUseToggle.checked = s?.allowChatDataUse !== false
+}
+
+els.wwwRagGroundingToggle.addEventListener('change', () => { sendPrivacySettings() })
+els.allowChatDataUseToggle.addEventListener('change', () => { sendPrivacySettings() })
+
 // Last known auth status — used by the conditional-checkbox logic so it can
 // recompute on tool-credential input events without re-querying the SW.
 let lastAuthSignedIn = false
@@ -577,6 +603,7 @@ void poll()
 void refreshStorageEstimate()
 void loadToolApiCredentials()
 void loadAccountSettings()
+void loadPrivacySettings()
 void loadTheme()
 void loadShowHandle()
 void refreshAuthStatus()

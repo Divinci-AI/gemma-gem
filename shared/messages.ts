@@ -283,6 +283,10 @@ export interface InternalSetSettingsRequest {
   divinciWorkspaceId?: string
   divinciReleaseId?: string
   theme?: 'system' | 'light' | 'dark'
+  /** Privacy: retrieve Divinci page context for the current site (default true). */
+  wwwRagGrounding?: boolean
+  /** Privacy: allow Divinci to use account chats to improve services (default true). */
+  allowChatDataUse?: boolean
 }
 
 // ---- Divinci account (Auth0 PKCE) protocol: popup/offscreen ↔ background SW ----

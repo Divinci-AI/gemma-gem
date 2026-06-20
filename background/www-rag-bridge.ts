@@ -19,6 +19,7 @@
 import { log } from '@/shared/logger'
 import { authedFetch, isSignedIn } from '@/background/divinci-auth'
 import { sanitizeUrlForIndex } from '@/shared/url-policy'
+import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
 import {
   buildPageStatusUrl,
   parsePageStatusResponse,
@@ -68,6 +69,28 @@ export function setupWwwRagBridge(): void {
       }
     },
   )
+}
+
+/**
+ * Read the privacy-relevant user settings from chrome.storage (the SW can;
+ * the offscreen can't). Both default to ENABLED — an undefined/never-saved
+ * value means the feature is on.
+ */
+async function readPrivacySettings(): Promise<{
+  wwwRagGrounding: boolean
+  allowChatDataUse: boolean
+}> {
+  try {
+    const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+    const s = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
+    return {
+      // Default ON: only an explicit `false` disables.
+      wwwRagGrounding: s?.wwwRagGrounding !== false,
+      allowChatDataUse: s?.allowChatDataUse !== false,
+    }
+  } catch {
+    return { wwwRagGrounding: true, allowChatDataUse: true }
+  }
 }
 
 function pageError(url: string, err: unknown): InternalPageCheckResponse {
@@ -145,11 +168,27 @@ async function handlePageContext(
 
   const sanitized = sanitizeUrlForIndex(req.url)
   if (!sanitized) return empty('invalid-url')
+
+  const { wwwRagGrounding, allowChatDataUse } = await readPrivacySettings()
+  // Grounding is client-enforced and authoritative here: when the user has
+  // turned WWW RAG grounding off, the page-context query NEVER leaves the
+  // device — return ok with no chunks so the chat proceeds ungrounded.
+  if (!wwwRagGrounding) {
+    return { type: 'internal:page-context-response', ok: true, url: sanitized, chunks: [] }
+  }
+
   if (!(await isSignedIn())) return empty('not signed in')
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  // Data-use signal only: when the user opts out, tell the server not to use
+  // this request's content to improve services. SERVER-SIDE ENFORCEMENT IS A
+  // SEPARATE TODO — the extension only carries the preference, it does not (and
+  // cannot) enforce server behaviour.
+  if (!allowChatDataUse) headers['X-Divinci-Data-Use'] = 'none'
 
   const result = await authedFetch(buildPageContextUrl(), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: buildPageContextBody({ url: sanitized, query: req.query, topK: req.topK }),
   })
   if (!result.ok) return empty(result.signedOut ? 'not signed in' : result.error)
