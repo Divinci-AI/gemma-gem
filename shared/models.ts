@@ -47,6 +47,11 @@ export const MODELS: Record<ModelId, ModelConfig> = {
 export const DEFAULT_MODEL_ID: ModelId = 'gemma-4-e2b'
 export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
 export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
+// In-page sidebar handle: persisted drag position (viewport fraction) + a
+// "completely hidden" flag (set by double-clicking the handle, restored from
+// the popup's Appearance toggle).
+export const STORAGE_KEY_HANDLE_TOP = 'divinci_sidebar_handle_top'
+export const STORAGE_KEY_HANDLE_HIDDEN = 'divinci_sidebar_handle_hidden'
 
 /**
  * User-configurable inference defaults. Set via the popup, applied by

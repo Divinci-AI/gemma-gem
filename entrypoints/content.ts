@@ -29,6 +29,8 @@ import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
 import {
   MODELS,
   DEFAULT_MODEL_ID,
+  STORAGE_KEY_HANDLE_TOP,
+  STORAGE_KEY_HANDLE_HIDDEN,
   type ModelId,
 } from '@/shared/models'
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
@@ -389,7 +391,15 @@ function mountSidebar(
   }
 
   function renderPageStatus(): void {
-    if (!pageStatus) {
+    // WWW-RAG page indexing is a secondary, fail-open feature (grounding is
+    // skipped silently when it's unavailable). Don't alarm the user with a red
+    // "Error"/"off" pill in the header for a background-check failure — just
+    // hide the pill for the non-actionable states. We still surface the useful
+    // ones (indexed / checking / not-indexed / sign-in).
+    // Compared as string: a background check can surface 'error'/'unavailable'
+    // at runtime even if they're not in the narrowed status type.
+    const state = pageStatus as string
+    if (!pageStatus || state === 'error' || state === 'unavailable') {
       el.pagePill.hidden = true
       return
     }
@@ -423,10 +433,6 @@ function mountSidebar(
       case 'not-configured':
         el.pagePill.textContent = 'WWW RAG off'
         el.pagePill.title = 'WWW RAG is not available right now'
-        break
-      case 'error':
-        el.pagePill.textContent = 'Error'
-        el.pagePill.title = 'Could not reach WWW RAG'
         break
     }
   }
@@ -705,8 +711,74 @@ function mountSidebar(
     }
   }
 
+  // ---- Draggable / hideable handle ---------------------------------------
+  // Vertical drag along the right edge, position persisted as a viewport
+  // fraction. Double-click hides it completely (restored from the popup).
+  function applyHandleTopFraction(frac: number): void {
+    const h = el.launcher.offsetHeight || 38
+    const top = Math.max(4, Math.min(window.innerHeight - h - 4, frac * window.innerHeight))
+    el.launcher.style.top = `${top}px`
+    el.launcher.style.transform = 'none'
+  }
+
+  void chrome.storage.local
+    .get([STORAGE_KEY_HANDLE_TOP, STORAGE_KEY_HANDLE_HIDDEN])
+    .then((s) => {
+      if (s[STORAGE_KEY_HANDLE_HIDDEN] === true) el.launcher.hidden = true
+      const frac = s[STORAGE_KEY_HANDLE_TOP]
+      if (typeof frac === 'number') applyHandleTopFraction(frac)
+    })
+
+  let dragStartY = 0
+  let dragStartTop = 0
+  let dragging = false
+  let dragMoved = false
+  el.launcher.addEventListener('pointerdown', (e) => {
+    dragging = true
+    dragMoved = false
+    dragStartY = e.clientY
+    dragStartTop = el.launcher.getBoundingClientRect().top
+    el.launcher.setPointerCapture(e.pointerId)
+  })
+  el.launcher.addEventListener('pointermove', (e) => {
+    if (!dragging) return
+    const dy = e.clientY - dragStartY
+    if (!dragMoved && Math.abs(dy) > 4) {
+      dragMoved = true
+      el.launcher.classList.add('dls-dragging')
+    }
+    if (!dragMoved) return
+    const h = el.launcher.offsetHeight
+    const top = Math.max(4, Math.min(window.innerHeight - h - 4, dragStartTop + dy))
+    el.launcher.style.top = `${top}px`
+    el.launcher.style.transform = 'none'
+  })
+  el.launcher.addEventListener('pointerup', (e) => {
+    if (!dragging) return
+    dragging = false
+    try { el.launcher.releasePointerCapture(e.pointerId) } catch { /* already released */ }
+    if (dragMoved) {
+      el.launcher.classList.remove('dls-dragging')
+      const frac = el.launcher.getBoundingClientRect().top / window.innerHeight
+      void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_TOP]: frac })
+    }
+  })
+
   // ---- Wire events --------------------------------------------------------
-  el.launcher.addEventListener('click', () => setOpen(!root.classList.contains('dls-open')))
+  el.launcher.addEventListener('click', (e) => {
+    // Suppress the click that ends a drag so it doesn't also toggle the panel.
+    if (dragMoved) {
+      dragMoved = false
+      e.preventDefault()
+      e.stopPropagation()
+      return
+    }
+    setOpen(!root.classList.contains('dls-open'))
+  })
+  el.launcher.addEventListener('dblclick', () => {
+    el.launcher.hidden = true
+    void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: true })
+  })
   el.close.addEventListener('click', () => setOpen(false))
   el.loadBtn.addEventListener('click', loadModel)
   el.send.addEventListener('click', () => (controller.isBusy() ? stopChat() : sendChat()))
@@ -726,6 +798,10 @@ function mountSidebar(
     if (area !== 'local') return
     // Live-update the account chip when the SW writes/clears the token bundle.
     if (STORAGE_KEY_DIVINCI_AUTH in changes) queryAccountStatus()
+    // Live show/hide the handle when toggled from the popup.
+    if (STORAGE_KEY_HANDLE_HIDDEN in changes) {
+      el.launcher.hidden = changes[STORAGE_KEY_HANDLE_HIDDEN].newValue === true
+    }
     if (!(STORAGE_KEY_OPEN in changes)) return
     const open = changes[STORAGE_KEY_OPEN].newValue === true
     if (open !== root.classList.contains('dls-open')) setOpen(open, false)
@@ -854,21 +930,34 @@ const SIDEBAR_CSS = /* css */ `
     top: 50%;
     transform: translateY(-50%);
     z-index: 2147483646;
-    width: 40px;
-    height: 48px;
+    width: 30px;
+    height: 38px;
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--dls-accent);
+    /* Apple-glass: translucent accent + blur so the page shows through. */
+    background: color-mix(in srgb, var(--dls-accent) 50%, transparent);
+    -webkit-backdrop-filter: blur(8px) saturate(140%);
+    backdrop-filter: blur(8px) saturate(140%);
     color: #fff;
-    border: none;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    border-right: none;
     border-radius: 10px 0 0 10px;
-    cursor: pointer;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.35);
-    transition: background 0.15s ease, right 0.25s ease;
+    cursor: grab;
+    opacity: 0.7;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.22);
+    touch-action: none; /* let pointer-drag own the gesture */
+    transition: opacity 0.15s ease, background 0.15s ease;
   }
-  .dls-launcher:hover { background: var(--dls-accent-hover); }
-  .dls-root.dls-open .dls-launcher { right: 380px; }
+  .dls-launcher svg { width: 17px; height: 17px; }
+  .dls-launcher:hover {
+    opacity: 1;
+    background: color-mix(in srgb, var(--dls-accent) 72%, transparent);
+  }
+  .dls-launcher.dls-dragging { cursor: grabbing; opacity: 1; transition: none; }
+  /* Hidden when the dock is open (close via the panel ✕) or hidden by the user. */
+  .dls-root.dls-open .dls-launcher,
+  .dls-launcher[hidden] { display: none; }
 
   .dls-panel {
     position: fixed;

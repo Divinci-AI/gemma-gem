@@ -16,7 +16,7 @@ import type {
   InternalStatusResponse,
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
-import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, type ModelId } from '@/shared/models'
+import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId } from '@/shared/models'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -39,6 +39,7 @@ const els = {
   cacheBadges: document.querySelectorAll<HTMLElement>('[data-cache-badge]'),
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
   themeSelect: document.getElementById('setting-theme') as HTMLSelectElement,
+  showHandleToggle: document.getElementById('setting-show-handle') as HTMLInputElement,
   tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
   maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
   cfAccountIdInput: document.getElementById('setting-cf-account-id') as HTMLInputElement,
@@ -560,12 +561,24 @@ els.themeSelect.addEventListener('change', () => {
   void sendInternal({ type: 'internal:set-settings', theme })
 })
 
+// In-page handle visibility (it can be hidden by double-clicking it on a page).
+async function loadShowHandle(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_HANDLE_HIDDEN)
+  els.showHandleToggle.checked = stored[STORAGE_KEY_HANDLE_HIDDEN] !== true
+}
+els.showHandleToggle.addEventListener('change', () => {
+  // Checked = shown → hidden flag is the inverse. content.ts reacts live via
+  // chrome.storage.onChanged.
+  void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: !els.showHandleToggle.checked })
+})
+
 // Initial paint + steady poll while popup is open
 void poll()
 void refreshStorageEstimate()
 void loadToolApiCredentials()
 void loadAccountSettings()
 void loadTheme()
+void loadShowHandle()
 void refreshAuthStatus()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are
