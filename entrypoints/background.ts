@@ -18,7 +18,7 @@
 import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
-import { setupDivinciAPIBridge } from '@/background/divinci-api-bridge'
+import { setupWwwRagBridge } from '@/background/www-rag-bridge'
 import { setupDivinciAuthBridge } from '@/background/divinci-auth'
 import { log } from '@/shared/logger'
 import {
@@ -124,7 +124,7 @@ export default defineBackground(() => {
   log.info('Divinci local-inference SW started')
   setupExternalBridge()
   setupInternalBridge()
-  setupDivinciAPIBridge()
+  setupWwwRagBridge()
   setupDivinciAuthBridge()
   setupSettingsPersistence()
 

@@ -369,25 +369,87 @@ export interface InternalClearCacheRequest {
   type: 'internal:clear-cache'
 }
 
-// ---- Page-check protocol (content script ↔ background) ----
+// ---- WWW RAG page protocol (content script ↔ background) ----
 
 /**
- * Request from the sidebar/contentscript: "is this URL indexed? If not, trigger a scrape."
+ * Request from the sidebar/contentscript: "is this URL indexed in WWW RAG, and
+ * is the indexed content fresh vs what I'm looking at?"
+ *
+ * `url` is the already-sanitized origin+pathname (sanitizeUrlForIndex); `hash`
+ * is the client content fingerprint (contentHash over the visible text) used
+ * for fresh/stale parity. The SW re-sanitizes defensively before sending.
  */
 export interface InternalPageCheckRequest {
   type: 'internal:check-page'
   url: string
+  /** Client content fingerprint for fresh/stale comparison (advisory). */
+  hash?: string
 }
 
 /**
- * Page-check result sent back to the sidebar/contentscript.
+ * Page-status result sent back to the sidebar/contentscript.
+ *
+ * Status enum (WWW RAG, P2):
+ *   - signed-out     not signed into a Divinci account → cannot query
+ *   - checking       request in flight (set client-side before the SW replies)
+ *   - indexed        crawled in WWW RAG and fresh ✓
+ *   - stale          indexed, but the live page content changed (re-crawl queued
+ *                    by the background pipeline; still usable)
+ *   - not-indexed    no crawled page in WWW RAG for this URL
+ *   - blacklisted    skipped by the client url-policy (never sent to the server)
+ *   - not-configured WWW RAG not provisioned server-side (503)
+ *   - error          network / 5xx / parse failure
  */
 export interface InternalPageCheckResponse {
   type: 'internal:page-status'
   url: string
-  status: 'not-configured' | 'indexed' | 'triggered' | 'error' | 'checking'
+  status:
+    | 'signed-out'
+    | 'checking'
+    | 'indexed'
+    | 'stale'
+    | 'not-indexed'
+    | 'blacklisted'
+    | 'not-configured'
+    | 'error'
+  /** Server freshness signal, when known (mirrors page-status `fresh`). */
+  fresh?: boolean
+  /** Crawled content version, when known. */
+  version?: number
+  /** Machine-readable reason — e.g. the url-policy reason for `blacklisted`. */
+  reason?: string
   error?: string
-  crawlId?: string
+}
+
+/**
+ * Sidebar → SW: retrieve URL-scoped context chunks from WWW RAG to ground a
+ * chat turn. The SW performs the OAuth-authed fetch (token never leaves the SW).
+ */
+export interface InternalPageContextRequest {
+  type: 'internal:page-context'
+  url: string
+  query: string
+  topK?: number
+}
+
+/** A single retrieved chunk (mirrors www-rag-api PageContextChunk). */
+export interface InternalPageContextChunk {
+  text: string
+  score?: number
+  source?: string
+  fileId?: string
+}
+
+/**
+ * SW → sidebar: the page-context result. Fails open — `ok: false` (or empty
+ * `chunks`) means the chat should proceed ungrounded, exactly as today.
+ */
+export interface InternalPageContextResponse {
+  type: 'internal:page-context-response'
+  ok: boolean
+  url: string
+  chunks: InternalPageContextChunk[]
+  error?: string
 }
 
 export type InternalRequest =
@@ -399,6 +461,7 @@ export type InternalRequest =
   | InternalClearCacheRequest
   | InternalSetSettingsRequest
   | InternalPageCheckRequest
+  | InternalPageContextRequest
   | InternalDivinciSignInRequest
   | InternalDivinciSignOutRequest
   | InternalDivinciAuthStatusRequest

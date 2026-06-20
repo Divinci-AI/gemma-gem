@@ -7,6 +7,22 @@ content scripts; this fork is a pure LLM transport for chat.divinci.app
 via `chrome.runtime.connect` over an `externally_connectable` port.
 See README for the architecture; STORE_LISTING.md for the CWS draft.
 
+## 0.6.0 (2026-06-19)
+
+- WWW RAG P2: the in-page page-check now runs the **account-authorized** flow
+  (no manual keys). On nav: `urlIndexDecision` gate → `contentHash` of visible
+  text → `internal:check-page` → SW OAuth-fetches `GET /api/v1/www-rag/
+  page-status`. Pill renders indexed / stale / not-indexed / blacklisted /
+  signed-out / not-configured / error.
+- Sidebar chat **grounding**: when the current page is indexed, `page-context`
+  chunks are fetched and prepended as a labelled system message to the local
+  model prompt (fails open — ungrounded chat if not indexed / signed out).
+- Added `authedFetch`/`isSignedIn` in the SW (token stays SW-owned; refresh-on-
+  401) and reused them; **removed** the old X-API-Key client + bridge
+  (`shared/divinci-api.ts`, `background/divinci-api-bridge.ts`) and the
+  `divinci_api_key`/`divinci_whitelabel_id` storage keys.
+- New `shared/www-rag-api.ts` (pure URL/body shaping + safe parsers) with tests.
+
 ## 0.5.0 (2026-06-19)
 
 - Popup tidy-up: the **header is the sole account surface** — "Sign up"

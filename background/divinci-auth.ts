@@ -179,6 +179,61 @@ async function getValidAccessToken(): Promise<string | null> {
   return refreshed?.accessToken ?? null
 }
 
+/** Lightweight check the bridges use to short-circuit to a "signed-out" reply. */
+export async function isSignedIn(): Promise<boolean> {
+  return (await getStoredTokens()) !== null
+}
+
+/**
+ * Result of an OAuth-authed fetch performed inside the SW. The access token
+ * stays SW-owned and never crosses a message boundary — only this shaped
+ * result does. `signedOut` distinguishes "no/expired session" (re-sign-in)
+ * from a transport/HTTP error.
+ */
+export type AuthedFetchResult =
+  | { ok: true; status: number; text: string }
+  | { ok: false; signedOut: true }
+  | { ok: false; signedOut: false; status?: number; error: string }
+
+/**
+ * Perform an OAuth-authed fetch with the SW-held access token: valid-token
+ * fetch → on 401, force-refresh once and retry → return the raw body text for
+ * the caller to safe-parse. This is the exact token machinery accountChat uses
+ * (getValidAccessToken + Bearer + refresh-on-401), factored out so the WWW RAG
+ * bridge reuses it without duplicating the refresh logic or seeing the token.
+ */
+export async function authedFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<AuthedFetchResult> {
+  try {
+    let token = await getValidAccessToken()
+    if (!token) return { ok: false, signedOut: true }
+
+    const withAuth = (t: string): RequestInit => ({
+      ...init,
+      headers: { ...(init?.headers ?? {}), Authorization: `Bearer ${t}` },
+    })
+
+    let res = await fetch(url, withAuth(token))
+
+    // One refresh-and-retry on 401 (token rotated/expired between checks).
+    if (res.status === 401) {
+      await clearTokenExpiry()
+      token = await getValidAccessToken()
+      if (!token) return { ok: false, signedOut: true }
+      res = await fetch(url, withAuth(token))
+      // Still 401 after a fresh token => the session is genuinely dead.
+      if (res.status === 401) return { ok: false, signedOut: true }
+    }
+
+    const text = await res.text()
+    return { ok: true, status: res.status, text }
+  } catch (err) {
+    return { ok: false, signedOut: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
 // ---- account-mode chat fetch (on the offscreen's behalf) ----
 
 // Conversation → server transcriptId, so multi-turn context is preserved. The

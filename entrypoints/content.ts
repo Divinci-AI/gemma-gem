@@ -32,11 +32,14 @@ import {
   type ModelId,
 } from '@/shared/models'
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
+import { urlIndexDecision } from '@/shared/url-policy'
+import { contentHash } from '@/shared/content-hash'
 import type {
   DivinciExternalEvent,
   DivinciExternalRequest,
   InternalStatusResponse,
   InternalPageCheckResponse,
+  InternalPageContextResponse,
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
 
@@ -128,6 +131,9 @@ function mountSidebar(
   let pageStatus: InternalPageCheckResponse['status'] | null = null
   let lastCheckedUrl = ''
   let navTimer: number | null = null
+  // Sanitized origin+pathname of the last successfully-checked page, used to
+  // ground the chat via page-context. Only set when the url passed the policy.
+  let groundableUrl: string | null = null
 
   function newRequestId(): string {
     return `sidebar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -246,55 +252,104 @@ function mountSidebar(
   el.modelChip.addEventListener('click', requestOpenPopup)
   el.accountChip.addEventListener('click', requestOpenPopup)
 
-  // ---- Page indexing status ------------------------------------------------
+  // ---- WWW RAG page status -------------------------------------------------
+  // On each nav: apply the client url-policy first (never send sensitive /
+  // capability / private URLs), then compute the content fingerprint and ask
+  // the SW (which OAuth-fetches page-status). Pill reflects the result; the
+  // sanitized URL of an indexed/stale page is remembered for chat grounding.
   function checkPageStatus(): void {
-    const url = location.href
+    const href = location.href
     // Skip if we already checked this URL (avoid redundant calls on popstate
     // that didn't actually change the URL).
-    if (url === lastCheckedUrl) return
-    lastCheckedUrl = url
+    if (href === lastCheckedUrl) return
+    lastCheckedUrl = href
+    groundableUrl = null
 
-    el.pagePill.hidden = true
-    try {
-      chrome.runtime.sendMessage(
-        { type: 'internal:check-page', url },
-        (resp: InternalPageCheckResponse | undefined) => {
-          void chrome.runtime.lastError
-          if (resp) applyPageStatus(resp)
-        },
-      )
-    } catch {
-      /* extension context gone */
+    const decision = urlIndexDecision(href)
+    if (!decision.allow || !decision.sanitizedUrl) {
+      pageStatus = 'blacklisted'
+      renderPageStatus()
+      return
     }
+
+    const sanitized = decision.sanitizedUrl
+    // Show "Checking…" immediately; the hash compute + round trip is async.
+    pageStatus = 'checking'
+    renderPageStatus()
+
+    void (async () => {
+      // Fingerprint the visible text (parity with the crawler). Best-effort —
+      // if hashing fails the server falls back to lastCrawledAt staleness.
+      let hash: string | undefined
+      try {
+        hash = await contentHash(document.body?.innerText ?? '')
+      } catch {
+        hash = undefined
+      }
+      // A faster nav may have superseded this check while we hashed.
+      if (disposed || href !== lastCheckedUrl) return
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'internal:check-page', url: sanitized, hash },
+          (resp: InternalPageCheckResponse | undefined) => {
+            void chrome.runtime.lastError
+            // Ignore a stale reply if the user navigated again meanwhile.
+            if (resp && href === lastCheckedUrl) applyPageStatus(resp, sanitized)
+          },
+        )
+      } catch {
+        /* extension context gone */
+      }
+    })()
   }
 
-  function applyPageStatus(resp: InternalPageCheckResponse): void {
+  function applyPageStatus(resp: InternalPageCheckResponse, sanitized: string): void {
     pageStatus = resp.status
+    // Remember the URL only when there's queryable context to ground with.
+    groundableUrl =
+      resp.status === 'indexed' || resp.status === 'stale' ? sanitized : null
     renderPageStatus()
   }
 
   function renderPageStatus(): void {
-    if (!pageStatus || pageStatus === 'not-configured') {
+    if (!pageStatus) {
       el.pagePill.hidden = true
       return
     }
     el.pagePill.hidden = false
+    el.pagePill.dataset.state = pageStatus
     switch (pageStatus) {
       case 'indexed':
-        el.pagePill.textContent = 'Indexed'
-        el.pagePill.dataset.state = 'indexed'
+        el.pagePill.textContent = 'Indexed ✓'
+        el.pagePill.title = 'This page is in Divinci WWW RAG; chat is grounded with it'
         break
-      case 'triggered':
-        el.pagePill.textContent = 'Indexing…'
-        el.pagePill.dataset.state = 'triggered'
+      case 'stale':
+        el.pagePill.textContent = 'Indexed (changed)'
+        el.pagePill.title = 'Indexed, but the page content changed since the last crawl'
+        break
+      case 'not-indexed':
+        el.pagePill.textContent = 'Not indexed'
+        el.pagePill.title = 'This page is not yet in Divinci WWW RAG'
         break
       case 'checking':
         el.pagePill.textContent = 'Checking…'
-        el.pagePill.dataset.state = 'checking'
+        el.pagePill.title = 'Checking WWW RAG for this page'
+        break
+      case 'blacklisted':
+        el.pagePill.textContent = 'Skipped'
+        el.pagePill.title = 'This page is excluded from indexing by the privacy policy'
+        break
+      case 'signed-out':
+        el.pagePill.textContent = 'Sign in'
+        el.pagePill.title = 'Sign in to your Divinci account to use WWW RAG'
+        break
+      case 'not-configured':
+        el.pagePill.textContent = 'WWW RAG off'
+        el.pagePill.title = 'WWW RAG is not available right now'
         break
       case 'error':
         el.pagePill.textContent = 'Error'
-        el.pagePill.dataset.state = 'error'
+        el.pagePill.title = 'Could not reach WWW RAG'
         break
     }
   }
@@ -433,15 +488,51 @@ function mountSidebar(
     streamingBubble.dataset.placeholder = '1'
 
     activeRequestId = newRequestId()
+    const requestId = activeRequestId
     renderSendButton()
 
-    send({
-      type: 'divinci:chat',
-      requestId: activeRequestId,
-      modelId: MODEL_ID,
-      messages: buildPromptMessages(),
-    })
+    // Ground with WWW RAG context when the page is indexed/stale, then send.
+    // Fails open: if grounding can't be fetched, we send ungrounded.
+    void (async () => {
+      const ctx = await fetchPageContext(text)
+      // The user may have stopped / a new turn started while we fetched.
+      if (requestId !== activeRequestId) return
+      send({
+        type: 'divinci:chat',
+        requestId,
+        modelId: MODEL_ID,
+        messages: buildPromptMessages(ctx),
+      })
+    })()
     scrollToBottom()
+  }
+
+  /**
+   * Fetch URL-scoped WWW RAG chunks to ground the chat. Only attempts it when
+   * the current page is indexed/stale and we have its sanitized URL. Returns
+   * the chunk texts (possibly empty). Fails open — any error => no grounding.
+   */
+  function fetchPageContext(query: string): Promise<string[]> {
+    if (!groundableUrl || (pageStatus !== 'indexed' && pageStatus !== 'stale')) {
+      return Promise.resolve([])
+    }
+    return new Promise<string[]>((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'internal:page-context', url: groundableUrl, query },
+          (resp: InternalPageContextResponse | undefined) => {
+            void chrome.runtime.lastError
+            if (resp?.ok && resp.chunks.length > 0) {
+              resolve(resp.chunks.map((c) => c.text))
+            } else {
+              resolve([])
+            }
+          },
+        )
+      } catch {
+        resolve([])
+      }
+    })
   }
 
   function stopChat(): void {
@@ -459,14 +550,34 @@ function mountSidebar(
   /**
    * Build the message array sent to the model: a small system prompt that
    * makes the assistant aware of the page the user is on (local inference,
-   * so no privacy cost), followed by the running conversation.
+   * so no privacy cost), an optional grounding system message carrying the
+   * WWW RAG chunks for this page, then the running conversation.
+   *
+   * `contextChunks` is empty when the page isn't indexed / grounding failed —
+   * the chat proceeds ungrounded exactly as before. The chunks go in a
+   * SEPARATE, clearly-labelled system message so the local model can tell page
+   * context from its own instructions.
    */
-  function buildPromptMessages(): Array<{ role: 'system' | ChatRole; content: string }> {
+  function buildPromptMessages(
+    contextChunks: string[] = [],
+  ): Array<{ role: 'system' | ChatRole; content: string }> {
     const sys =
       'You are Divinci, a concise, helpful AI assistant running locally in the ' +
       `user's browser via WebGPU. The user is currently viewing the page ` +
       `"${document.title}" (${location.href}). Use that as context only when relevant.`
-    return [{ role: 'system', content: sys }, ...history]
+    const messages: Array<{ role: 'system' | ChatRole; content: string }> = [
+      { role: 'system', content: sys },
+    ]
+    if (contextChunks.length > 0) {
+      messages.push({
+        role: 'system',
+        content:
+          'Context from this page (Divinci WWW RAG). Use it to answer when ' +
+          'relevant; ignore it otherwise.\n\n' +
+          contextChunks.map((c, i) => `[${i + 1}] ${c}`).join('\n\n'),
+      })
+    }
+    return [...messages, ...history]
   }
 
   // ---- Rendering ----------------------------------------------------------
@@ -803,8 +914,12 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-page-pill[hidden] { display: none; }
   .dls-page-pill[data-state="indexed"] { color: #7ee2a8; border-color: #2c4636; }
-  .dls-page-pill[data-state="triggered"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-page-pill[data-state="stale"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-page-pill[data-state="not-indexed"] { color: #8b91a7; border-color: #3a3e50; }
   .dls-page-pill[data-state="checking"] { color: #8b91a7; border-color: #3a3e50; }
+  .dls-page-pill[data-state="blacklisted"] { color: #8b91a7; border-color: #3a3e50; }
+  .dls-page-pill[data-state="signed-out"] { color: #9fb4ff; border-color: #2f3a63; }
+  .dls-page-pill[data-state="not-configured"] { color: #8b91a7; border-color: #3a3e50; }
   .dls-page-pill[data-state="error"] { color: #ff9b9b; border-color: #4a3a3a; }
   .dls-close {
     background: transparent;

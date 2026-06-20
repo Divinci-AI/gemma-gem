@@ -127,10 +127,6 @@ const isDevBuild =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
 
-// ---- RAG/vector API storage keys ----
-export const STORAGE_KEY_API_KEY = 'divinci_api_key'
-export const STORAGE_KEY_WHITELABEL_ID = 'divinci_whitelabel_id'
-
 export const ALLOWED_WEB_APP_ORIGINS = [
   'https://chat.divinci.app',
   'https://chat.stage.divinci.app',
