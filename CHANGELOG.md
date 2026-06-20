@@ -7,6 +7,20 @@ content scripts; this fork is a pure LLM transport for chat.divinci.app
 via `chrome.runtime.connect` over an `externally_connectable` port.
 See README for the architecture; STORE_LISTING.md for the CWS draft.
 
+## 0.5.0 (2026-06-19)
+
+- Popup tidy-up: the **header is the sole account surface** — "Sign up"
+  (Auth0 `screen_hint=signup`) / signed-in avatar dropdown / Sign out. Removed
+  the redundant in-body "Divinci account" section.
+- Consolidated everything tunable under one **"Advanced settings"** group
+  (Inference defaults · Account-mode chat: workspace/release + use-account ·
+  Tool APIs: CF/Brave/Serper manual fallback).
+- Removed the manual **Indexing settings** (API key + whitelabel id) — page
+  indexing is becoming an account-authorized, behind-the-scenes **WWW RAG**
+  flow (no keys). See `agent-handoff-page-indexing.md` for the architecture.
+- Fix: carry the OAuth **profile (name/picture/email) forward across token
+  refresh** so the avatar/name don't vanish ~1h into a session.
+
 ## 0.4.0 (2026-06-19)
 
 - Prominent Divinci sign-in in the popup **header**: signed-out shows a
