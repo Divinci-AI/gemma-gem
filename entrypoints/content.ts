@@ -331,6 +331,11 @@ function mountSidebar(
       }
     })
     if (resp?.ok && resp.serverChatId) {
+      // Stamp server message ids onto the just-mirrored tail so reactions on
+      // those messages can sync to the account AIChat.
+      if (resp.messageIds && resp.messageIds.length) {
+        await store.setServerMessageIds(conv.id, start, resp.messageIds)
+      }
       await store.setMirrorState(conv.id, {
         serverChatId: resp.serverChatId,
         serverTranscriptId: resp.serverTranscriptId,
@@ -1219,6 +1224,29 @@ function mountSidebar(
     if (!msgId || activeConversationId == null) return
     const reactions = await store.toggleReaction(activeConversationId, msgId, emoji)
     renderReactions(wrap, reactions)
+    // Local-first is the source of truth; additionally sync to the account
+    // AIChat when this chat is mirrored + signed in (dogfoods the SDK contract).
+    void syncReactionToAccount(msgId, emoji, reactions.includes(emoji))
+  }
+
+  /** Best-effort: mirror a reaction toggle to the server emojis map (account chats). */
+  async function syncReactionToAccount(msgId: string, emoji: string, add: boolean): Promise<void> {
+    if (!accountSignedIn || activeConversationId == null) return
+    const conv = await store.get(activeConversationId)
+    const msg = conv?.messages.find((m) => m.id === msgId)
+    if (!conv?.serverChatId || !msg?.serverMessageId) return
+    const req: import('@/shared/messages').InternalAccountEmojiRequest = {
+      type: 'internal:account-emoji',
+      serverChatId: conv.serverChatId,
+      serverMessageId: msg.serverMessageId,
+      emoji,
+      add,
+    }
+    try {
+      chrome.runtime.sendMessage(req, () => void chrome.runtime.lastError)
+    } catch {
+      /* extension context gone — local reaction already saved */
+    }
   }
 
   /** Render the persistent reaction chips under a bubble (above the hover bar). */

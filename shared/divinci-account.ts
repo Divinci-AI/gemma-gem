@@ -300,6 +300,24 @@ export function buildIngestBatchBody(items: MirrorMessage[]): string {
   return JSON.stringify({ items })
 }
 
+/** The ingest response returns `{ messageIds: string[] }` in item order. */
+export function parseIngestedMessageIds(raw: unknown): string[] {
+  const ids = (raw as { messageIds?: unknown })?.messageIds
+  return Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string') : []
+}
+
+// --- Emoji reactions (dogfoods divinci.aiChats.addEmojiReaction's contract) --
+
+/** POST endpoint that toggles an emoji reaction on a mirrored AIChat message. */
+export function buildAiChatEmojiUrl(chatId: string, messageId: string): string {
+  return `${DIVINCI_API_BASE}/ai-chat/${encodeURIComponent(chatId)}/message/${encodeURIComponent(messageId)}/emoji-reaction`
+}
+
+/** Emoji-reaction body: `{ emoji, add }` or `{ emoji, remove }`. */
+export function buildEmojiReactionBody(emoji: string, add: boolean): string {
+  return JSON.stringify(add ? { emoji, add: true } : { emoji, remove: true })
+}
+
 /** POST endpoint that mints (or returns the existing) public share token. */
 export function buildShareApiUrl(chatId: string): string {
   return `${DIVINCI_API_BASE}/ai-chat/${encodeURIComponent(chatId)}/share`

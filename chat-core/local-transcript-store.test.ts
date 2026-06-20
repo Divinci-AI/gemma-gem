@@ -106,6 +106,17 @@ describe('LocalTranscriptStore', () => {
     expect(got!.messages[0].reactions).toEqual(['❤️'])
   })
 
+  it('stamps server message ids onto a contiguous run from startIndex', async () => {
+    const store = makeStore()
+    const c = await store.create()
+    const a = await store.appendMessage(c.id, { role: 'user', content: 'a' })
+    const b = await store.appendMessage(c.id, { role: 'assistant', content: 'b' })
+    await store.setServerMessageIds(c.id, 0, ['srv-a', 'srv-b'])
+    const got = await store.get(c.id)
+    expect(got!.messages.find((m) => m.id === a.id)!.serverMessageId).toBe('srv-a')
+    expect(got!.messages.find((m) => m.id === b.id)!.serverMessageId).toBe('srv-b')
+  })
+
   it('toggleReaction is a no-op for unknown conversation/message', async () => {
     const store = makeStore()
     const c = await store.create()

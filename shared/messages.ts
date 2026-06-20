@@ -373,6 +373,28 @@ export interface InternalAccountMirrorResponse {
   serverChatId?: string
   /** The AIChat's transcript id (reference / future import). */
   serverTranscriptId?: string
+  /** Server message ids for the just-ingested tail, in order (for reaction sync). */
+  messageIds?: string[]
+  skipped?: 'not-signed-in'
+  error?: string
+}
+
+/**
+ * Sidebar → SW: add/remove an emoji reaction on a mirrored AIChat message.
+ * Dogfoods the same server contract as the SDK's aiChats.addEmojiReaction.
+ */
+export interface InternalAccountEmojiRequest {
+  type: 'internal:account-emoji'
+  serverChatId: string
+  serverMessageId: string
+  emoji: string
+  add: boolean
+}
+
+/** SW → sidebar: emoji-sync result. `skipped` = not signed in. */
+export interface InternalAccountEmojiResponse {
+  type: 'internal:account-emoji-response'
+  ok: boolean
   skipped?: 'not-signed-in'
   error?: string
 }
@@ -538,6 +560,7 @@ export type InternalRequest =
   | InternalAccountChatRequest
   | InternalAccountMirrorRequest
   | InternalAccountShareRequest
+  | InternalAccountEmojiRequest
   | InternalGetTabIdRequest
   | InternalOpenPopupRequest
 

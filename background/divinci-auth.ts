@@ -31,9 +31,12 @@ import {
   parseCreatedChat,
   buildChatIngestUrl,
   buildIngestBatchBody,
+  parseIngestedMessageIds,
   buildShareApiUrl,
   parseShareToken,
   buildPublicShareLink,
+  buildAiChatEmojiUrl,
+  buildEmojiReactionBody,
 } from '@/shared/divinci-account'
 import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
 import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
@@ -46,6 +49,8 @@ import type {
   InternalAccountMirrorResponse,
   InternalAccountShareRequest,
   InternalAccountShareResponse,
+  InternalAccountEmojiRequest,
+  InternalAccountEmojiResponse,
 } from '@/shared/messages'
 
 // ---- token storage ----
@@ -330,6 +335,7 @@ export async function mirrorConversation(
       }
     }
 
+    let messageIds: string[] = []
     if (req.items.length > 0) {
       const ing = await authedFetch(buildChatIngestUrl(chatId), {
         method: 'POST',
@@ -344,9 +350,14 @@ export async function mirrorConversation(
       if ((ing.status ?? 0) >= 400) {
         return { type: RESP, ok: false, error: `server ${ing.status}: ${(ing.text ?? '').substring(0, 160)}` }
       }
+      try {
+        messageIds = parseIngestedMessageIds(JSON.parse(ing.text ?? ''))
+      } catch {
+        messageIds = []
+      }
     }
 
-    return { type: RESP, ok: true, serverChatId: chatId, serverTranscriptId: transcriptId }
+    return { type: RESP, ok: true, serverChatId: chatId, serverTranscriptId: transcriptId, messageIds }
   } catch (err) {
     return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
   }
@@ -381,6 +392,35 @@ export async function shareConversation(
     } catch (e) {
       return { type: RESP, ok: false, error: (e as Error).message }
     }
+  } catch (err) {
+    return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
+/**
+ * Add/remove an emoji reaction on a mirrored AIChat message. Dogfoods the same
+ * server contract as the SDK's aiChats.addEmojiReaction (POST
+ * /ai-chat/:chatId/message/:messageId/emoji-reaction). Skips when not signed in.
+ */
+export async function syncEmojiReaction(
+  req: InternalAccountEmojiRequest,
+): Promise<InternalAccountEmojiResponse> {
+  const RESP = 'internal:account-emoji-response' as const
+  try {
+    const res = await authedFetch(buildAiChatEmojiUrl(req.serverChatId, req.serverMessageId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: buildEmojiReactionBody(req.emoji, req.add),
+    })
+    if (!res.ok) {
+      return res.signedOut
+        ? { type: RESP, ok: false, skipped: 'not-signed-in' }
+        : { type: RESP, ok: false, error: res.error ?? 'emoji-reaction failed' }
+    }
+    if ((res.status ?? 0) >= 400) {
+      return { type: RESP, ok: false, error: `server ${res.status}: ${(res.text ?? '').substring(0, 160)}` }
+    }
+    return { type: RESP, ok: true }
   } catch (err) {
     return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
   }
@@ -505,6 +545,9 @@ export function setupDivinciAuthBridge(): void {
           return true
         case 'internal:account-share':
           void shareConversation(msg).then((r) => sendResponse(r))
+          return true
+        case 'internal:account-emoji':
+          void syncEmojiReaction(msg).then((r) => sendResponse(r))
           return true
         default:
           return undefined

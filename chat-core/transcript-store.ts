@@ -31,6 +31,9 @@ export interface StoredMessage extends ChatMessage {
   createdAt: number
   /** Emoji reactions on this message (local-first; deduped). */
   reactions?: string[]
+  /** Server message id once this message has been mirrored to the account
+   * AIChat — lets reactions sync to the server's emojis map. */
+  serverMessageId?: string
 }
 
 export interface ConversationSummary {

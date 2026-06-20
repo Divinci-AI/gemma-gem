@@ -114,6 +114,21 @@ export class LocalTranscriptStore implements TranscriptStore {
     await this.backend.put(conv)
   }
 
+  /**
+   * Stamp server message ids onto a contiguous run of messages starting at
+   * `startIndex` (the order the mirror batch-ingested them). Lets reactions on
+   * those messages sync to the account AIChat.
+   */
+  async setServerMessageIds(convId: string, startIndex: number, ids: string[]): Promise<void> {
+    const conv = await this.backend.get(convId)
+    if (!conv) return
+    for (let i = 0; i < ids.length; i++) {
+      const msg = conv.messages[startIndex + i]
+      if (msg) msg.serverMessageId = ids[i]
+    }
+    await this.backend.put(conv)
+  }
+
   /** Toggle an emoji reaction on a message; returns the new (deduped) list. */
   async toggleReaction(convId: string, messageId: string, emoji: string): Promise<string[]> {
     const conv = await this.backend.get(convId)
