@@ -52,6 +52,14 @@ export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
 // the popup's Appearance toggle).
 export const STORAGE_KEY_HANDLE_TOP = 'divinci_sidebar_handle_top'
 export const STORAGE_KEY_HANDLE_HIDDEN = 'divinci_sidebar_handle_hidden'
+// Per-tab active conversation: a map { [tabId]: conversationId } so each browser
+// tab keeps its own thread (page-coherent). Shared by the content script (read/
+// write) and the SW (prunes a tab's entry on tab close). Global "follow-me" mode
+// ignores this and uses STORAGE_KEY_ACTIVE_CONV (a single shared pointer).
+export const STORAGE_KEY_TAB_ACTIVE = 'divinci_tab_active'
+// "Global chat mode" toggle: false (default) = per-tab active conversation;
+// true = one conversation follows the user across every tab.
+export const STORAGE_KEY_GLOBAL_CHAT_MODE = 'divinci_global_chat_mode'
 
 /**
  * User-configurable inference defaults. Set via the popup, applied by

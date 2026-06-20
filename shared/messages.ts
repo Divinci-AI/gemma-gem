@@ -403,6 +403,21 @@ export interface InternalOpenPopupRequest {
 }
 
 /**
+ * Content script → SW: ask for the id of the tab the content script runs in.
+ * A content script can't read its own tabId; only the SW sees it via
+ * `sender.tab`. Used to key the per-tab active conversation.
+ */
+export interface InternalGetTabIdRequest {
+  type: 'internal:get-tab-id'
+}
+
+/** SW → content script: the resolved tab id (null if unavailable). */
+export interface InternalGetTabIdResponse {
+  type: 'internal:get-tab-id-response'
+  tabId: number | null
+}
+
+/**
  * Same-origin unload request from the popup. Drops the model from VRAM.
  * Doesn't clear the on-disk Cache API entries — model bytes survive for
  * the next load. To reclaim disk, send InternalClearCacheRequest.
@@ -521,6 +536,7 @@ export type InternalRequest =
   | InternalAccountChatRequest
   | InternalAccountMirrorRequest
   | InternalAccountShareRequest
+  | InternalGetTabIdRequest
   | InternalOpenPopupRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */

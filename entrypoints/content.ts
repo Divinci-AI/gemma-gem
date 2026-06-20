@@ -31,6 +31,8 @@ import {
   DEFAULT_MODEL_ID,
   STORAGE_KEY_HANDLE_TOP,
   STORAGE_KEY_HANDLE_HIDDEN,
+  STORAGE_KEY_TAB_ACTIVE,
+  STORAGE_KEY_GLOBAL_CHAT_MODE,
   type ModelId,
 } from '@/shared/models'
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
@@ -39,6 +41,7 @@ import { contentHash } from '@/shared/content-hash'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
 import { LocalTranscriptStore } from '@/chat-core/local-transcript-store'
+import { resolveActiveConvId, setTabActive } from '@/chat-core/tab-session'
 import { ChromeStorageConversationBackend } from '@/chat-core/chrome-storage-conversation-backend'
 import { renderMarkdown } from '@/chat-core/markdown'
 import { conversationToMarkdown, conversationToJson, filenameSlug } from '@/chat-core/share'
@@ -50,6 +53,7 @@ import type {
   InternalPageCheckResponse,
   InternalPageContextResponse,
   InternalDivinciAuthStatusResponse,
+  InternalGetTabIdResponse,
 } from '@/shared/messages'
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
@@ -127,6 +131,7 @@ function mountSidebar(
     convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
     resize: root.querySelector<HTMLElement>('.dls-resize')!,
+    globalToggle: root.querySelector<HTMLButtonElement>('.dls-global-toggle')!,
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
@@ -175,8 +180,26 @@ function mountSidebar(
   let activeConversationId: string | null = null
   // Mirror to the Divinci account when signed in (set by renderAccountChip).
   let accountSignedIn = false
+  // Per-tab vs global ("follow-me") chat model. tabId is resolved from the SW
+  // on init (a content script can't read its own). Default is per-tab.
+  let myTabId: number | null = null
+  let globalChatMode = false
   // Serialize appends so user/assistant writes to the same record don't race.
   let persistQueue: Promise<void> = Promise.resolve()
+
+  /**
+   * Persist the active-conversation pointer to the right place: a single shared
+   * key in global mode, or this tab's slot in the per-tab map otherwise.
+   */
+  async function persistActiveConv(id: string): Promise<void> {
+    if (globalChatMode || myTabId == null) {
+      await chrome.storage.local.set({ [STORAGE_KEY_ACTIVE_CONV]: id })
+      return
+    }
+    const stored = await chrome.storage.local.get(STORAGE_KEY_TAB_ACTIVE)
+    const map = (stored[STORAGE_KEY_TAB_ACTIVE] as Record<string, string> | undefined) ?? {}
+    await chrome.storage.local.set({ [STORAGE_KEY_TAB_ACTIVE]: setTabActive(map, myTabId, id) })
+  }
 
   function persistMessage(role: 'user' | 'assistant', content: string): void {
     persistQueue = persistQueue
@@ -184,7 +207,7 @@ function mountSidebar(
         if (activeConversationId == null) {
           const conv = await store.create()
           activeConversationId = conv.id
-          void chrome.storage.local.set({ [STORAGE_KEY_ACTIVE_CONV]: conv.id })
+          await persistActiveConv(conv.id)
         }
         await store.appendMessage(activeConversationId, { role, content })
         if (root.classList.contains('dls-expanded')) void renderConvList()
@@ -715,8 +738,13 @@ function mountSidebar(
   function buildSystemMessages(contextChunks: string[] = []): CoreChatMessage[] {
     const sys =
       'You are Divinci, a concise, helpful AI assistant running locally in the ' +
-      `user's browser via WebGPU. The user is currently viewing the page ` +
-      `"${document.title}" (${location.href}). Use that as context only when relevant.`
+      `user's browser via WebGPU. The user is RIGHT NOW viewing this page: ` +
+      `"${document.title}" — ${location.href}. They may navigate between pages ` +
+      'during the conversation, so always treat THIS page as the current one, ' +
+      'even if earlier messages referred to a different page. You can see only ' +
+      'the page title and URL above (plus any reference text provided below) — ' +
+      'not the full page contents — so if asked about details you cannot see, ' +
+      'say so briefly rather than guessing.'
     const messages: CoreChatMessage[] = [{ role: 'system', content: sys }]
     if (contextChunks.length > 0) {
       const fenced = contextChunks.map((c, i) => `[${i + 1}] ${c}`).join('\n\n')
@@ -758,18 +786,30 @@ function mountSidebar(
     const conv = await store.get(id)
     if (!conv) return
     activeConversationId = id
-    void chrome.storage.local.set({ [STORAGE_KEY_ACTIVE_CONV]: id })
+    void persistActiveConv(id)
     const msgs: CoreChatMessage[] = conv.messages.map((m) => ({ role: m.role, content: m.content }))
     controller.setHistory(msgs)
     renderThread(msgs)
     void renderConvList()
   }
 
+  /** Clear this context's active-conversation pointer (per-tab slot or global). */
+  async function clearActiveConv(): Promise<void> {
+    if (globalChatMode || myTabId == null) {
+      await chrome.storage.local.remove(STORAGE_KEY_ACTIVE_CONV)
+      return
+    }
+    const stored = await chrome.storage.local.get(STORAGE_KEY_TAB_ACTIVE)
+    const map = (stored[STORAGE_KEY_TAB_ACTIVE] as Record<string, string> | undefined) ?? {}
+    delete map[String(myTabId)]
+    await chrome.storage.local.set({ [STORAGE_KEY_TAB_ACTIVE]: map })
+  }
+
   // Start a fresh chat — the conversation record is created lazily on the first
   // message (persistMessage), so empty "New chat" rows don't pile up.
   function newChat(): void {
     activeConversationId = null
-    void chrome.storage.local.remove(STORAGE_KEY_ACTIVE_CONV)
+    void clearActiveConv()
     controller.setHistory([])
     renderThread([])
     void renderConvList()
@@ -780,6 +820,72 @@ function mountSidebar(
     await store.remove(id)
     if (id === activeConversationId) newChat()
     else void renderConvList()
+  }
+
+  // ---- Per-tab vs global ("follow-me") chat model -------------------------
+
+  /**
+   * Ask the SW for this content script's tabId (it can't read its own). Returns
+   * null if the SW is asleep / sees no tab — callers fall back to global mode.
+   */
+  function resolveMyTabId(): Promise<number | null> {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'internal:get-tab-id' },
+          (resp: InternalGetTabIdResponse | undefined) => {
+            void chrome.runtime.lastError
+            resolve(typeof resp?.tabId === 'number' ? resp.tabId : null)
+          },
+        )
+      } catch {
+        resolve(null)
+      }
+    })
+  }
+
+  function renderGlobalModeToggle(): void {
+    el.globalToggle.dataset.state = globalChatMode ? 'global' : 'tab'
+    el.globalToggle.setAttribute('aria-pressed', String(globalChatMode))
+    el.globalToggle.title = globalChatMode
+      ? 'Global chat: this conversation follows you across all tabs. Click for per-tab chats.'
+      : 'Per-tab chat: each tab has its own conversation. Click to make one chat follow you across tabs.'
+  }
+
+  /**
+   * Flip the chat model. Carries the CURRENT conversation across the switch so
+   * the user's active thread isn't lost: going global adopts it as the shared
+   * pointer; going per-tab pins it to this tab.
+   */
+  async function setGlobalChatMode(on: boolean): Promise<void> {
+    if (on === globalChatMode) return
+    globalChatMode = on
+    renderGlobalModeToggle()
+    await chrome.storage.local.set({ [STORAGE_KEY_GLOBAL_CHAT_MODE]: on })
+    if (activeConversationId) await persistActiveConv(activeConversationId)
+  }
+
+  /** Re-resolve + load the active conversation for the current mode/tab (used
+   *  when another tab flips the mode or switches the shared global chat). */
+  async function reloadActiveConvFromStorage(): Promise<void> {
+    const stored = await chrome.storage.local.get([STORAGE_KEY_ACTIVE_CONV, STORAGE_KEY_TAB_ACTIVE])
+    const convId = resolveActiveConvId({
+      globalMode: globalChatMode,
+      tabId: myTabId,
+      globalConvId:
+        typeof stored[STORAGE_KEY_ACTIVE_CONV] === 'string'
+          ? (stored[STORAGE_KEY_ACTIVE_CONV] as string)
+          : null,
+      tabMap: (stored[STORAGE_KEY_TAB_ACTIVE] as Record<string, string> | undefined) ?? {},
+    })
+    if (convId && convId !== activeConversationId) {
+      await openConversation(convId)
+    } else if (!convId) {
+      activeConversationId = null
+      controller.setHistory([])
+      renderThread([])
+      void renderConvList()
+    }
   }
 
   async function renderConvList(): Promise<void> {
@@ -1195,6 +1301,7 @@ function mountSidebar(
   })
   el.close.addEventListener('click', () => setOpen(false))
   el.expandBtn.addEventListener('click', () => setExpanded(!root.classList.contains('dls-expanded')))
+  el.globalToggle.addEventListener('click', () => void setGlobalChatMode(!globalChatMode))
   el.newChatBtn.addEventListener('click', newChat)
   el.shareBtn.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -1240,6 +1347,19 @@ function mountSidebar(
     if (STORAGE_KEY_HANDLE_HIDDEN in changes) {
       el.launcher.hidden = changes[STORAGE_KEY_HANDLE_HIDDEN].newValue === true
     }
+    // Global-mode flipped in another tab → adopt it + reload this context's
+    // active conversation so the model genuinely follows across tabs.
+    if (STORAGE_KEY_GLOBAL_CHAT_MODE in changes) {
+      globalChatMode = changes[STORAGE_KEY_GLOBAL_CHAT_MODE].newValue === true
+      renderGlobalModeToggle()
+      void reloadActiveConvFromStorage()
+    }
+    // In global mode, another tab switching the shared conversation should
+    // reflect here too.
+    if (globalChatMode && STORAGE_KEY_ACTIVE_CONV in changes) {
+      const next = changes[STORAGE_KEY_ACTIVE_CONV].newValue
+      if (typeof next === 'string' && next !== activeConversationId) void openConversation(next)
+    }
     if (!(STORAGE_KEY_OPEN in changes)) return
     const open = changes[STORAGE_KEY_OPEN].newValue === true
     if (open !== root.classList.contains('dls-open')) setOpen(open, false)
@@ -1251,18 +1371,36 @@ function mountSidebar(
 
   // ---- Initial paint ------------------------------------------------------
   renderModelState()
-  void chrome.storage.local
-    .get([STORAGE_KEY_OPEN, STORAGE_KEY_ACTIVE_CONV])
-    .then((stored) => {
-      if (disposed) return
-      // Intentionally NOT restoring the expanded/full-screen state on load:
-      // every page landing starts in the right-hand dock so the user always
-      // knows where they are. Full-screen remains a per-session toggle.
-      // Restore the last conversation's transcript into the thread.
-      const convId = stored[STORAGE_KEY_ACTIVE_CONV]
-      if (typeof convId === 'string') void openConversation(convId)
-      if (stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
+  void (async () => {
+    // Resolve this tab's id first (per-tab chat keys off it; falls back to the
+    // global pointer if the SW can't tell us).
+    myTabId = await resolveMyTabId()
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEY_OPEN,
+      STORAGE_KEY_ACTIVE_CONV,
+      STORAGE_KEY_TAB_ACTIVE,
+      STORAGE_KEY_GLOBAL_CHAT_MODE,
+    ])
+    if (disposed) return
+    globalChatMode = stored[STORAGE_KEY_GLOBAL_CHAT_MODE] === true
+    renderGlobalModeToggle()
+    // Intentionally NOT restoring the expanded/full-screen state on load:
+    // every page landing starts in the right-hand dock so the user always
+    // knows where they are. Full-screen remains a per-session toggle.
+    // Restore this context's active conversation (per-tab slot, or the shared
+    // pointer in global mode) into the thread.
+    const convId = resolveActiveConvId({
+      globalMode: globalChatMode,
+      tabId: myTabId,
+      globalConvId:
+        typeof stored[STORAGE_KEY_ACTIVE_CONV] === 'string'
+          ? (stored[STORAGE_KEY_ACTIVE_CONV] as string)
+          : null,
+      tabMap: (stored[STORAGE_KEY_TAB_ACTIVE] as Record<string, string> | undefined) ?? {},
     })
+    if (convId) void openConversation(convId)
+    if (stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
+  })()
 
   return {
     dispose: () => {
@@ -1322,6 +1460,12 @@ const TEMPLATE = /* html */ `
         </button>
       </div>
       <div class="dls-header-actions">
+        <button class="dls-global-toggle" type="button" data-state="tab" aria-pressed="false" aria-label="Toggle global chat (follow across tabs)">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/>
+            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/>
+          </svg>
+        </button>
         <div class="dls-share-wrap">
           <button class="dls-share" aria-label="Share chat" title="Share chat" aria-haspopup="true" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
@@ -1556,6 +1700,21 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-expand:hover { color: var(--dls-text); background: var(--dls-bg-2); }
   .dls-expand-collapse { display: none; }
+
+  /* Global / per-tab chat toggle. Accent-highlighted when global is active. */
+  .dls-global-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--dls-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+  }
+  .dls-global-toggle:hover { color: var(--dls-text); background: var(--dls-bg-2); }
+  .dls-global-toggle[data-state="global"] { color: var(--dls-accent); }
 
   /* Share button + dropdown menu. */
   .dls-share-wrap { position: relative; display: flex; }

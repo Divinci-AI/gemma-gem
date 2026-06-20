@@ -20,6 +20,7 @@ import { setupExternalBridge } from '@/background/external-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
 import { setupWwwRagBridge } from '@/background/www-rag-bridge'
 import { setupDivinciAuthBridge } from '@/background/divinci-auth'
+import { setupTabSessionBridge } from '@/background/tab-session-bridge'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -132,6 +133,7 @@ export default defineBackground(() => {
   setupInternalBridge()
   setupWwwRagBridge()
   setupDivinciAuthBridge()
+  setupTabSessionBridge()
   setupSettingsPersistence()
 
   // Sidebar → "open the popup" (clicking the in-page model chip / avatar).
