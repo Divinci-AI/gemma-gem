@@ -1252,10 +1252,12 @@ function mountSidebar(
   // ---- Initial paint ------------------------------------------------------
   renderModelState()
   void chrome.storage.local
-    .get([STORAGE_KEY_OPEN, STORAGE_KEY_EXPANDED, STORAGE_KEY_ACTIVE_CONV])
+    .get([STORAGE_KEY_OPEN, STORAGE_KEY_ACTIVE_CONV])
     .then((stored) => {
       if (disposed) return
-      if (stored[STORAGE_KEY_EXPANDED] === true) setExpanded(true, false)
+      // Intentionally NOT restoring the expanded/full-screen state on load:
+      // every page landing starts in the right-hand dock so the user always
+      // knows where they are. Full-screen remains a per-session toggle.
       // Restore the last conversation's transcript into the thread.
       const convId = stored[STORAGE_KEY_ACTIVE_CONV]
       if (typeof convId === 'string') void openConversation(convId)
