@@ -7,6 +7,17 @@ content scripts; this fork is a pure LLM transport for chat.divinci.app
 via `chrome.runtime.connect` over an `externally_connectable` port.
 See README for the architecture; STORE_LISTING.md for the CWS draft.
 
+## 0.3.0 (2026-06-19)
+
+- Tool APIs: Kimi K2.7-Code tool-calling with web search, with a manual
+  Cloudflare-token fallback in the popup (`ffcd34a`).
+- "Sign in with Divinci" — Auth0 PKCE OAuth in the popup that proxies
+  tool-calling through the Divinci server, so tools work without pasting
+  CF/provider keys (`db14d64`).
+- Indexing settings (API key + Whitelabel ID) — groundwork for the
+  page-indexing status pill (see `agent-handoff-page-indexing.md`).
+- (0.2.0 shipped the in-page sidebar; see "Notable since fork" below.)
+
 Notable since fork:
 - In-page sidebar: a launcher + slide-in right-hand panel injected on
   every page (`entrypoints/content.ts`, shadow-DOM isolated) to chat with
