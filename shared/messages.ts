@@ -340,6 +340,15 @@ export interface InternalAccountChatResponse {
 }
 
 /**
+ * Sidebar → SW: request to open the extension action popup (clicking the
+ * sidebar's model chip / account avatar). Best-effort — chrome.action.openPopup
+ * is Chrome 127+ and may no-op when triggered indirectly; harmless if so.
+ */
+export interface InternalOpenPopupRequest {
+  type: 'internal:open-popup'
+}
+
+/**
  * Same-origin unload request from the popup. Drops the model from VRAM.
  * Doesn't clear the on-disk Cache API entries — model bytes survive for
  * the next load. To reclaim disk, send InternalClearCacheRequest.
@@ -393,6 +402,7 @@ export type InternalRequest =
   | InternalDivinciSignOutRequest
   | InternalDivinciAuthStatusRequest
   | InternalAccountChatRequest
+  | InternalOpenPopupRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {

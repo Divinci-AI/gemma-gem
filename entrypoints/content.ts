@@ -97,9 +97,10 @@ function mountSidebar(
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
-    modelChip: root.querySelector<HTMLElement>('.dls-model-chip')!,
-    accountChip: root.querySelector<HTMLElement>('.dls-account-chip')!,
+    modelChip: root.querySelector<HTMLButtonElement>('.dls-model-chip')!,
+    accountChip: root.querySelector<HTMLButtonElement>('.dls-account-chip')!,
     accountAvatar: root.querySelector<HTMLImageElement>('.dls-account-avatar')!,
+    accountFallback: root.querySelector<HTMLElement>('.dls-account-fallback')!,
     accountLabel: root.querySelector<HTMLElement>('.dls-account-label')!,
     loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
     loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
@@ -195,25 +196,55 @@ function mountSidebar(
 
   function renderAccountChip(resp: InternalDivinciAuthStatusResponse): void {
     if (!resp.signedIn) {
+      // Signed-out: compact "Local only" pill, no avatar.
       el.accountChip.dataset.state = 'signed-out'
       el.accountAvatar.hidden = true
       el.accountAvatar.removeAttribute('src')
+      el.accountFallback.hidden = true
+      el.accountLabel.hidden = false
       el.accountLabel.textContent = 'Local only'
+      el.accountChip.title = 'Sign in via the Divinci Local popup'
       return
     }
+    // Signed-in: show JUST the avatar circle (matches the popup dropdown),
+    // email moves to the tooltip. Falls back to an initial circle when the
+    // id_token carried no picture.
     el.accountChip.dataset.state = 'signed-in'
+    el.accountChip.title = resp.email || 'Signed in'
+    el.accountLabel.hidden = true
+    const initial = (resp.name?.trim() || resp.email?.trim() || '?').charAt(0).toUpperCase()
     if (resp.picture) {
       el.accountAvatar.src = resp.picture
       el.accountAvatar.hidden = false
+      el.accountFallback.hidden = true
       el.accountAvatar.onerror = () => {
+        // Picture failed to load → fall back to the initial circle.
         el.accountAvatar.hidden = true
+        el.accountFallback.textContent = initial
+        el.accountFallback.hidden = false
       }
     } else {
       el.accountAvatar.hidden = true
       el.accountAvatar.removeAttribute('src')
+      el.accountFallback.textContent = initial
+      el.accountFallback.hidden = false
     }
-    el.accountLabel.textContent = resp.email || 'Signed in'
   }
+
+  // Clicking the model chip or account avatar opens the extension popup
+  // (best-effort: chrome.action.openPopup is Chrome 127+ and may be a no-op
+  // from a content-script-triggered SW call — harmless if it doesn't open).
+  function requestOpenPopup(): void {
+    try {
+      chrome.runtime.sendMessage({ type: 'internal:open-popup' }, () => {
+        void chrome.runtime.lastError
+      })
+    } catch {
+      /* extension context gone */
+    }
+  }
+  el.modelChip.addEventListener('click', requestOpenPopup)
+  el.accountChip.addEventListener('click', requestOpenPopup)
 
   // ---- Page indexing status ------------------------------------------------
   function checkPageStatus(): void {
@@ -629,11 +660,12 @@ const TEMPLATE = /* html */ `
         </span>
         <span class="dls-title-text">Divinci Local</span>
         <span class="dls-page-pill" data-state="unknown" hidden></span>
-        <span class="dls-model-chip"></span>
-        <span class="dls-account-chip" data-state="signed-out">
-          <img class="dls-account-avatar" alt="" width="16" height="16" hidden />
+        <button class="dls-model-chip" type="button" title="Open Divinci Local settings"></button>
+        <button class="dls-account-chip" data-state="signed-out" type="button" title="Divinci account">
+          <img class="dls-account-avatar" alt="" width="20" height="20" hidden />
+          <span class="dls-account-fallback" hidden></span>
           <span class="dls-account-label">Local only</span>
-        </span>
+        </button>
       </div>
       <button class="dls-close" aria-label="Close">×</button>
     </header>
@@ -776,6 +808,7 @@ const SIDEBAR_CSS = /* css */ `
   /* Model + account chips now live inline in .dls-header (the standalone
      .dls-chips subheader row was removed). */
   .dls-model-chip {
+    font-family: inherit;
     font-size: 10px;
     font-weight: 500;
     padding: 2px 8px;
@@ -785,28 +818,57 @@ const SIDEBAR_CSS = /* css */ `
     color: var(--dls-muted);
     white-space: nowrap;
     flex-shrink: 0;
+    cursor: pointer;
   }
+  .dls-model-chip:hover { border-color: var(--dls-accent); color: var(--dls-text); }
   .dls-account-chip {
     display: inline-flex;
     align-items: center;
     gap: 5px;
     min-width: 0;
+    font-family: inherit;
     font-size: 10px;
     font-weight: 500;
     padding: 2px 8px;
     border-radius: 999px;
     border: 1px solid var(--dls-border);
+    background: transparent;
     color: var(--dls-muted);
+    cursor: pointer;
+    flex-shrink: 0;
   }
-  .dls-account-chip[data-state="signed-in"] { color: #7ee2a8; border-color: #2c4636; }
+  .dls-account-chip:hover { border-color: var(--dls-accent); }
+  /* Signed-in collapses to a bare avatar circle (matches the popup dropdown):
+     no pill border/padding, just the 20px image or initial circle. */
+  .dls-account-chip[data-state="signed-in"] {
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+  }
   .dls-account-avatar {
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     object-fit: cover;
     flex-shrink: 0;
+    display: block;
   }
   .dls-account-avatar[hidden] { display: none; }
+  .dls-account-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--dls-accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .dls-account-fallback[hidden] { display: none; }
   .dls-account-label {
     overflow: hidden;
     text-overflow: ellipsis;

@@ -126,6 +126,18 @@ export default defineBackground(() => {
   setupDivinciAuthBridge()
   setupSettingsPersistence()
 
+  // Sidebar → "open the popup" (clicking the in-page model chip / avatar).
+  // chrome.action.openPopup is Chrome 127+ and may reject when not tied to an
+  // extension-context user gesture — best-effort, swallow failures.
+  chrome.runtime.onMessage.addListener((msg: Message) => {
+    if ((msg as { type?: string })?.type !== 'internal:open-popup') return
+    try {
+      chrome.action.openPopup?.().catch((e) => log.debug('openPopup rejected:', e))
+    } catch (e) {
+      log.debug('openPopup threw:', e)
+    }
+  })
+
   ensureOffscreenDocument()
     .then(() => log.info('Offscreen document ready'))
     .then(() => hydrateOffscreenSettings())
