@@ -10,6 +10,7 @@ import {
   buildChatCompletionsUrl,
   buildChatCompletionsBody,
   parseChatCompletion,
+  parseChatCompletionResult,
   TOKEN_EXPIRY_SKEW_MS,
 } from '@/shared/divinci-account'
 
@@ -105,6 +106,24 @@ describe('chat completions shaping', () => {
   it('includes releaseId when provided', () => {
     const b = JSON.parse(buildChatCompletionsBody({ messages: [], releaseId: 'rel1' }))
     expect(b.releaseId).toBe('rel1')
+  })
+  it('includes transcriptId when provided (multi-turn reuse)', () => {
+    const b = JSON.parse(buildChatCompletionsBody({ messages: [], transcriptId: 'T9' }))
+    expect(b.transcriptId).toBe('T9')
+  })
+})
+
+describe('parseChatCompletionResult', () => {
+  it('returns text + transcriptId', () => {
+    expect(
+      parseChatCompletionResult({ choices: [{ message: { content: 'hi' } }], transcriptId: 'T1' }),
+    ).toEqual({ text: 'hi', transcriptId: 'T1' })
+  })
+  it('omits transcriptId when absent', () => {
+    expect(parseChatCompletionResult({ choices: [{ message: { content: 'hi' } }] })).toEqual({
+      text: 'hi',
+      transcriptId: undefined,
+    })
   })
 })
 

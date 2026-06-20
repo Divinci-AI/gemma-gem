@@ -154,13 +154,23 @@ export interface AccountChatMessage {
   content: string
 }
 
-/** Request body for the workspace chat-completions endpoint. */
+/**
+ * Request body for the workspace chat-completions endpoint.
+ *
+ * `transcriptId` reuses a server-side transcript across turns of one
+ * conversation. This is REQUIRED for multi-turn context: the endpoint only
+ * adds `messages[last]` to the transcript and draws prior context from the
+ * transcript's existing messages — so without a stable transcriptId, every
+ * turn is context-less (and orphans a fresh transcript).
+ */
 export function buildChatCompletionsBody(opts: {
   messages: AccountChatMessage[]
   releaseId?: string
+  transcriptId?: string
 }): string {
   const body: Record<string, unknown> = { messages: opts.messages }
   if (opts.releaseId) body.releaseId = opts.releaseId
+  if (opts.transcriptId) body.transcriptId = opts.transcriptId
   return JSON.stringify(body)
 }
 
@@ -170,8 +180,18 @@ export function buildChatCompletionsBody(opts: {
  * a useful message rather than "undefined").
  */
 export function parseChatCompletion(raw: unknown): string {
+  return parseChatCompletionResult(raw).text
+}
+
+/**
+ * Parse the completion response into { text, transcriptId }. The staging
+ * endpoint returns transcriptId at the top level; callers persist it to reuse
+ * the transcript on the next turn (see buildChatCompletionsBody).
+ */
+export function parseChatCompletionResult(raw: unknown): { text: string; transcriptId?: string } {
   const obj = raw as {
     choices?: Array<{ message?: { content?: string } }>
+    transcriptId?: string
     error?: { message?: string; code?: string }
   }
   if (obj?.error) {
@@ -181,5 +201,5 @@ export function parseChatCompletion(raw: unknown): string {
   if (typeof content !== 'string' || content.length === 0) {
     throw new Error('chat completion response had no assistant content')
   }
-  return content
+  return { text: content, transcriptId: typeof obj.transcriptId === 'string' ? obj.transcriptId : undefined }
 }

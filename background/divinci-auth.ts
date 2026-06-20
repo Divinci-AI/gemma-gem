@@ -25,7 +25,7 @@ import {
   isAccessTokenExpired,
   buildChatCompletionsUrl,
   buildChatCompletionsBody,
-  parseChatCompletion,
+  parseChatCompletionResult,
 } from '@/shared/divinci-account'
 import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
 import type {
@@ -120,6 +120,34 @@ export async function getAuthStatus(): Promise<{ signedIn: boolean; email?: stri
   return { signedIn: true, email: tokens.email }
 }
 
+// Single-flight refresh guard. The Auth0 app uses ROTATING refresh tokens, so
+// two concurrent refreshes would race: the first rotates (invalidates) the
+// token, the second then fails with an invalid-grant and burns the session.
+// Sharing one in-flight promise makes concurrent callers await the same
+// refresh. (check-then-assign is atomic — no await between them.)
+let refreshInFlight: Promise<DivinciAuthTokens | null> | null = null
+
+function refreshTokens(current: DivinciAuthTokens): Promise<DivinciAuthTokens | null> {
+  if (refreshInFlight) return refreshInFlight
+  refreshInFlight = (async () => {
+    try {
+      if (!current.refreshToken) return null
+      const refreshed = await postToken(buildRefreshBody(current.refreshToken))
+      // Carry the prior refresh token forward if the response omitted one
+      // (defensive — rotation normally returns a fresh one).
+      if (!refreshed.refreshToken) refreshed.refreshToken = current.refreshToken
+      await setStoredTokens(refreshed)
+      return refreshed
+    } catch (err) {
+      log.error('[divinci-auth] token refresh failed:', err)
+      return null
+    } finally {
+      refreshInFlight = null
+    }
+  })()
+  return refreshInFlight
+}
+
 /**
  * Return a non-expired access token, refreshing via the refresh token when
  * needed. Returns null when not signed in or the refresh failed (caller should
@@ -129,28 +157,51 @@ async function getValidAccessToken(): Promise<string | null> {
   const tokens = await getStoredTokens()
   if (!tokens) return null
   if (!isAccessTokenExpired(tokens, Date.now())) return tokens.accessToken
-  if (!tokens.refreshToken) return null
-  try {
-    const refreshed = await postToken(buildRefreshBody(tokens.refreshToken))
-    // Carry the prior refresh token forward if the response omitted one.
-    if (!refreshed.refreshToken) refreshed.refreshToken = tokens.refreshToken
-    await setStoredTokens(refreshed)
-    return refreshed.accessToken
-  } catch (err) {
-    log.error('[divinci-auth] token refresh failed:', err)
-    return null
-  }
+  const refreshed = await refreshTokens(tokens)
+  return refreshed?.accessToken ?? null
 }
 
 // ---- account-mode chat fetch (on the offscreen's behalf) ----
 
-async function accountChat(req: InternalAccountChatRequest): Promise<InternalAccountChatResponse> {
+// Conversation → server transcriptId, so multi-turn context is preserved. The
+// endpoint adds only messages[last] to the transcript and draws prior context
+// from the transcript's own messages, so without a reused transcriptId every
+// turn is context-less + orphans a transcript. In-memory: an SW eviction
+// mid-conversation resets it (next turn starts a fresh transcript — harmless).
+const transcriptByConversation = new Map<string, string>()
+
+/** FNV-1a 32-bit hash → short base36. Cheap, stable, no crypto needed. */
+function hashString(s: string): string {
+  let h = 0x811c9dc5
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 0x01000193)
+  }
+  return (h >>> 0).toString(36)
+}
+
+/**
+ * Key a conversation by its (immutable) first user message + workspace. Best
+ * available heuristic — the extension has no thread id from the web app. Two
+ * conversations that open with the identical first message would share a
+ * transcript; acceptable for a single user's own workspace.
+ */
+function conversationKey(workspaceId: string, messages: InternalAccountChatRequest['messages']): string {
+  return `${workspaceId}::${hashString(messages[0]?.content ?? '')}`
+}
+
+export async function accountChat(req: InternalAccountChatRequest): Promise<InternalAccountChatResponse> {
   try {
     let token = await getValidAccessToken()
     if (!token) return { type: 'internal:account-chat-response', ok: false, error: 'not signed in' }
 
     const url = buildChatCompletionsUrl(req.workspaceId)
-    const body = buildChatCompletionsBody({ messages: req.messages, releaseId: req.releaseId })
+    const convKey = conversationKey(req.workspaceId, req.messages)
+    const body = buildChatCompletionsBody({
+      messages: req.messages,
+      releaseId: req.releaseId,
+      transcriptId: transcriptByConversation.get(convKey),
+    })
 
     let res = await fetch(url, {
       method: 'POST',
@@ -189,7 +240,10 @@ async function accountChat(req: InternalAccountChatRequest): Promise<InternalAcc
         error: `non-JSON response (${res.status}): ${text.substring(0, 120)}`,
       }
     }
-    return { type: 'internal:account-chat-response', ok: true, text: parseChatCompletion(raw) }
+    const result = parseChatCompletionResult(raw)
+    // Remember the transcript so the next turn of this conversation reuses it.
+    if (result.transcriptId) transcriptByConversation.set(convKey, result.transcriptId)
+    return { type: 'internal:account-chat-response', ok: true, text: result.text }
   } catch (err) {
     return { type: 'internal:account-chat-response', ok: false, error: (err as Error).message ?? String(err) }
   }
