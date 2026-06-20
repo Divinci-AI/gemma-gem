@@ -60,6 +60,12 @@ const STORAGE_KEY_PANEL_WIDTH = 'divinci_sidebar_width'
 const PANEL_WIDTH_DEFAULT = 380
 const PANEL_WIDTH_MIN = 320
 const PANEL_WIDTH_MAX = 760
+
+// Google Gemma brand mark (divinci.ai/brand/companies/gemma.svg), inlined so the
+// assistant avatar needs no network fetch and isn't subject to host-page CSP —
+// fitting for an offline-first extension. Monochrome; rendered on a white circle.
+const GEMMA_LOGO_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#000" fill-rule="evenodd" aria-hidden="true"><path d="M12.34 5.953a8.233 8.233 0 01-.247-1.125V3.72a8.25 8.25 0 015.562 2.232H12.34zm-.69 0c.113-.373.199-.755.257-1.145V3.72a8.25 8.25 0 00-5.562 2.232h5.304zm-5.433.187h5.373a7.98 7.98 0 01-.267.696 8.41 8.41 0 01-1.76 2.65L6.216 6.14zm-.264-.187H2.977v.187h2.915a8.436 8.436 0 00-2.357 5.767H0v.186h3.535a8.436 8.436 0 002.357 5.767H2.977v.186h2.976v2.977h.187v-2.915a8.436 8.436 0 005.767 2.357V24h.186v-3.535a8.436 8.436 0 005.767-2.357v2.915h.186v-2.977h2.977v-.186h-2.915a8.436 8.436 0 002.357-5.767H24v-.186h-3.535a8.436 8.436 0 00-2.357-5.767h2.915v-.187h-2.977V2.977h-.186v2.915a8.436 8.436 0 00-5.767-2.357V0h-.186v3.535A8.436 8.436 0 006.14 5.892V2.977h-.187v2.976zm6.14 14.326a8.25 8.25 0 005.562-2.233H12.34c-.108.367-.19.743-.247 1.126v1.107zm-.186-1.087a8.015 8.015 0 00-.258-1.146H6.345a8.25 8.25 0 005.562 2.233v-1.087zm-8.186-7.285h1.107a8.23 8.23 0 001.125-.247V6.345a8.25 8.25 0 00-2.232 5.562zm1.087.186H3.72a8.25 8.25 0 002.232 5.562v-5.304a8.012 8.012 0 00-1.145-.258zm15.47-.186a8.25 8.25 0 00-2.232-5.562v5.315c.367.108.743.19 1.126.247h1.107zm-1.086.186c-.39.058-.772.144-1.146.258v5.304a8.25 8.25 0 002.233-5.562h-1.087zm-1.332 5.69V12.41a7.97 7.97 0 00-.696.267 8.409 8.409 0 00-2.65 1.76l3.346 3.346zm0-6.18v-5.45l-.012-.013h-5.451c.076.235.162.468.26.696a8.698 8.698 0 001.819 2.688 8.698 8.698 0 002.688 1.82c.228.097.46.183.696.259zM6.14 17.848V12.41c.235.078.468.167.696.267a8.403 8.403 0 012.688 1.799 8.404 8.404 0 011.799 2.688c.1.228.19.46.267.696H6.152l-.012-.012zm0-6.245V6.326l3.29 3.29a8.716 8.716 0 01-2.594 1.728 8.14 8.14 0 01-.696.259zm6.257 6.257h5.277l-3.29-3.29a8.716 8.716 0 00-1.728 2.594 8.135 8.135 0 00-.259.696zm-2.347-7.81a9.435 9.435 0 01-2.88 1.96 9.14 9.14 0 012.88 1.94 9.14 9.14 0 011.94 2.88 9.435 9.435 0 011.96-2.88 9.14 9.14 0 012.88-1.94 9.435 9.435 0 01-2.88-1.96 9.434 9.434 0 01-1.96-2.88 9.14 9.14 0 01-1.94 2.88z"/></svg>'
 const STATUS_POLL_MS = 1500
 
 type ChatRole = 'user' | 'assistant'
@@ -156,6 +162,12 @@ function mountSidebar(
   // Sanitized origin+pathname of the last successfully-checked page, used to
   // ground the chat via page-context. Only set when the url passed the policy.
   let groundableUrl: string | null = null
+
+  // Logged-in user's avatar for user-message bubbles. Updated by the account
+  // chip render; falls back to an initial circle when there's no picture
+  // (or "·" when signed out / local-only).
+  let userAvatarUrl: string | null = null
+  let userInitial = '·'
 
   // ---- Conversation persistence (local IndexedDB; account mirroring is a
   // follow-up once the SDK/OAuth transcript gaps are filled) ----------------
@@ -384,6 +396,9 @@ function mountSidebar(
       el.accountLabel.hidden = false
       el.accountLabel.textContent = 'Local only'
       el.accountChip.title = 'Sign in via the Divinci Local popup'
+      userAvatarUrl = null
+      userInitial = '·'
+      refreshUserAvatars()
       return
     }
     // Signed-in: show JUST the avatar circle (matches the popup dropdown),
@@ -393,6 +408,9 @@ function mountSidebar(
     el.accountChip.title = resp.email || 'Signed in'
     el.accountLabel.hidden = true
     const initial = (resp.name?.trim() || resp.email?.trim() || '?').charAt(0).toUpperCase()
+    userAvatarUrl = resp.picture || null
+    userInitial = initial
+    refreshUserAvatars()
     if (resp.picture) {
       el.accountAvatar.src = resp.picture
       el.accountAvatar.hidden = false
@@ -726,7 +744,7 @@ function mountSidebar(
 
   // Re-render the thread DOM from a message list (e.g. after switching chats).
   function renderThread(messages: CoreChatMessage[]): void {
-    el.messages.querySelectorAll('.dls-bubble').forEach((b) => b.remove())
+    el.messages.querySelectorAll('.dls-row').forEach((b) => b.remove())
     el.empty.hidden = messages.length > 0
     for (const m of messages) {
       if (m.role === 'system') continue
@@ -894,12 +912,61 @@ function mountSidebar(
   }
 
   // ---- Rendering ----------------------------------------------------------
+  // Circle avatar for a message row: Gemma's mark for the assistant, the
+  // signed-in user's picture (or an initial circle) for the user.
+  function buildAvatar(role: ChatRole): HTMLElement {
+    const av = document.createElement('span')
+    if (role === 'user') {
+      av.className = 'dls-avatar dls-avatar-user'
+      if (userAvatarUrl) {
+        const img = document.createElement('img')
+        img.alt = ''
+        img.referrerPolicy = 'no-referrer'
+        img.src = userAvatarUrl
+        img.onerror = () => {
+          av.classList.add('dls-avatar-initial')
+          av.textContent = userInitial
+        }
+        av.appendChild(img)
+      } else {
+        av.classList.add('dls-avatar-initial')
+        av.textContent = userInitial
+      }
+    } else {
+      av.className = 'dls-avatar dls-avatar-gemma'
+      // Trusted hardcoded brand mark (not user input) — safe to inline.
+      av.innerHTML = GEMMA_LOGO_SVG
+    }
+    return av
+  }
+
+  // Refresh the avatar on every existing user row (e.g. after sign-in/out).
+  function refreshUserAvatars(): void {
+    el.messages.querySelectorAll('.dls-row-user').forEach((row) => {
+      const old = row.querySelector('.dls-avatar-user')
+      if (!old) return
+      old.replaceWith(buildAvatar('user'))
+    })
+  }
+
   function appendBubble(role: ChatRole, text: string, markdown = false): HTMLElement {
+    const row = document.createElement('div')
+    row.className = `dls-row dls-row-${role === 'user' ? 'user' : 'assistant'}`
     const bubble = document.createElement('div')
     bubble.className = `dls-bubble dls-bubble-${role}`
     if (markdown) setBubbleMarkdown(bubble, text)
     else bubble.textContent = text
-    el.messages.appendChild(bubble)
+    const avatar = buildAvatar(role)
+    // User: bubble then avatar (avatar sits bottom-right). Assistant: avatar
+    // then bubble (avatar sits bottom-left).
+    if (role === 'user') {
+      row.appendChild(bubble)
+      row.appendChild(avatar)
+    } else {
+      row.appendChild(avatar)
+      row.appendChild(bubble)
+    }
+    el.messages.appendChild(row)
     scrollToBottom()
     return bubble
   }
@@ -1732,8 +1799,47 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; }
 
+  /* Message row = avatar + bubble, bottom-aligned so the avatar sits in the
+     bottom corner of the bubble. */
+  .dls-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    max-width: 92%;
+  }
+  .dls-row-user { align-self: flex-end; }
+  .dls-row-assistant { align-self: flex-start; }
+
+  .dls-avatar {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 2px;
+  }
+  .dls-avatar-gemma {
+    background: #fff;
+    padding: 4px;
+    box-sizing: border-box;
+    border: 1px solid var(--dls-border);
+  }
+  .dls-avatar-gemma svg { width: 100%; height: 100%; display: block; }
+  .dls-avatar-user { background: var(--dls-bg-2); border: 1px solid var(--dls-border); }
+  .dls-avatar-user img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .dls-avatar-initial {
+    background: var(--dls-accent);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
   .dls-bubble {
-    max-width: 88%;
+    max-width: 100%;
     padding: 9px 12px;
     border-radius: 12px;
     font-size: 13px;
@@ -1742,13 +1848,11 @@ const SIDEBAR_CSS = /* css */ `
     word-break: break-word;
   }
   .dls-bubble-user {
-    align-self: flex-end;
     background: var(--dls-accent);
     color: #fff;
     border-bottom-right-radius: 4px;
   }
   .dls-bubble-assistant {
-    align-self: flex-start;
     background: var(--dls-bg-2);
     color: var(--dls-text);
     border: 1px solid var(--dls-border);
