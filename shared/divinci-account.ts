@@ -54,6 +54,8 @@ export function buildAuthorizeUrl(opts: {
   redirectUri: string
   codeChallenge: string
   state: string
+  /** When true, hint Auth0 to open the signup screen rather than login. */
+  signup?: boolean
 }): string {
   const p = new URLSearchParams({
     response_type: 'code',
@@ -68,6 +70,9 @@ export function buildAuthorizeUrl(opts: {
     // the extension to the wrong account on first interactive sign-in.
     prompt: 'login',
   })
+  // Signup hint: Auth0 opens the registration screen instead of login. Kept
+  // alongside prompt:'login' so a stale SSO session is still ignored.
+  if (opts.signup) p.set('screen_hint', 'signup')
   return `https://${DIVINCI_AUTH.domain}/authorize?${p.toString()}`
 }
 

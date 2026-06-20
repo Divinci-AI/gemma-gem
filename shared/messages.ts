@@ -289,6 +289,12 @@ export interface InternalSetSettingsRequest {
 /** Popup → SW: begin an interactive Auth0 PKCE sign-in. */
 export interface InternalDivinciSignInRequest {
   type: 'internal:divinci-signin'
+  /**
+   * When true, route the Auth0 /authorize call to the signup screen
+   * (`screen_hint=signup`) instead of the default login screen. The header
+   * "Sign up" button sets this; the sign-in/sign-out toggle leaves it unset.
+   */
+  signup?: boolean
 }
 
 /** Popup → SW: clear stored Divinci OAuth tokens. */

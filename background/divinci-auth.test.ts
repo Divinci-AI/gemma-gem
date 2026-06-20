@@ -95,6 +95,22 @@ describe('accountChat', () => {
     expect(fetchMock.mock.calls.some((c) => c[0] === tokenEndpoint())).toBe(true)
   })
 
+  it('preserves the profile (name/picture/email) across a refresh that omits id_token', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = {
+      accessToken: 'OLD', refreshToken: 'RT', expiresAt: 0,
+      email: 'a@b.co', name: 'Ada L', picture: 'https://x/p.png',
+    }
+    fetchMock.mockImplementation(async (url: string) =>
+      url === tokenEndpoint()
+        ? mkRes(200, { access_token: 'AT2', expires_in: 3600 }) // no id_token in refresh
+        : mkRes(200, COMPLETION),
+    )
+    await accountChat({ type: 'internal:account-chat', messages: [{ role: 'user', content: 'unique-f' }], workspaceId: 'ws' })
+    const stored = store[STORAGE_KEY_DIVINCI_AUTH] as { name?: string; picture?: string; email?: string; accessToken: string }
+    expect(stored.accessToken).toBe('AT2') // refreshed
+    expect(stored).toMatchObject({ email: 'a@b.co', name: 'Ada L', picture: 'https://x/p.png' }) // profile kept
+  })
+
   it('surfaces a non-401 server error without retrying', async () => {
     store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
     fetchMock.mockResolvedValue(mkRes(500, { error: { message: 'boom' } }))

@@ -16,7 +16,7 @@
       <div id="header-account" class="header-account">
         <!-- Signed-out state -->
         <button id="header-signin-btn" class="header-signin-btn" type="button" hidden>
-          Sign in with Divinci
+          Sign up
         </button>
         <!-- Signed-in state -->
         <button id="header-avatar-btn" class="header-avatar-btn" type="button" aria-haspopup="true" aria-expanded="false" title="Divinci account" hidden>
@@ -81,83 +81,74 @@
     </section>
 
     <section id="settings">
+      <p class="setting-note">
+        Page indexing uses your Divinci account automatically (coming soon).
+      </p>
       <details>
-        <summary>Inference defaults</summary>
-        <div class="setting-row">
-          <label for="setting-temperature" title="0 = deterministic / greedy. >0 enables sampling.">Temperature</label>
-          <input type="number" id="setting-temperature" min="0" max="2" step="0.1" />
+        <summary>Advanced settings</summary>
+
+        <div class="setting-group">
+          <p class="setting-subhead">Inference defaults</p>
+          <div class="setting-row">
+            <label for="setting-temperature" title="0 = deterministic / greedy. >0 enables sampling.">Temperature</label>
+            <input type="number" id="setting-temperature" min="0" max="2" step="0.1" />
+          </div>
+          <div class="setting-row">
+            <label for="setting-max-tokens" title="Hard cap on tokens per generation.">Max new tokens</label>
+            <input type="number" id="setting-max-tokens" min="1" max="8192" step="1" />
+          </div>
+          <p class="setting-note">
+            Web-app per-call values override these. Saved automatically.
+          </p>
         </div>
-        <div class="setting-row">
-          <label for="setting-max-tokens" title="Hard cap on tokens per generation.">Max new tokens</label>
-          <input type="number" id="setting-max-tokens" min="1" max="8192" step="1" />
+
+        <div class="setting-group">
+          <p class="setting-subhead">Account-mode chat</p>
+          <div class="setting-row setting-row-checkbox" hidden>
+            <label for="setting-use-divinci-account" title="Proxy tool-calling through your signed-in Divinci account instead of pasting Cloudflare/Brave/Serper tokens.">Use my Divinci account</label>
+            <input type="checkbox" id="setting-use-divinci-account" />
+          </div>
+          <div class="setting-row">
+            <label for="setting-divinci-workspace-id" title="Workspace (whitelabel) id the account chat targets. You must own this workspace.">Workspace ID</label>
+            <input type="text" id="setting-divinci-workspace-id" autocomplete="off" placeholder="24-hex id" />
+          </div>
+          <div class="setting-row">
+            <label for="setting-divinci-release-id" title="Optional. Pin a release; its toolRouting.enabled gates server-side web-search.">Release ID (optional)</label>
+            <input type="text" id="setting-divinci-release-id" autocomplete="off" />
+          </div>
+          <p class="setting-note">
+            When signed in, tool-calling runs on stage.divinci.app with server-held
+            keys — no Cloudflare/Brave/Serper tokens needed. Web search requires a
+            release with tool routing enabled.
+          </p>
         </div>
-        <p class="setting-note">
-          Web-app per-call values override these. Saved automatically.
-        </p>
-      </details>
-      <details>
-        <summary>Indexing settings</summary>
-        <div class="setting-row">
-          <label for="setting-api-key" title="API key for Divinci RAG/vector API">API key</label>
-          <input type="password" id="setting-api-key" autocomplete="off" />
+
+        <div class="setting-group">
+          <p class="setting-subhead">Tool APIs (Kimi K2.7-Code + web search) — manual fallback</p>
+          <div class="setting-row">
+            <label for="setting-cf-account-id" title="Cloudflare Account ID for Workers AI API. Required for Kimi tool routing.">CF Account ID</label>
+            <input type="text" id="setting-cf-account-id" autocomplete="off" placeholder="acct_..." />
+          </div>
+          <div class="setting-row">
+            <label for="setting-cf-api-token" title="Cloudflare API Token scoped to Workers AI (Read/Run) only. Required for Kimi tool routing.">CF API Token</label>
+            <input type="password" id="setting-cf-api-token" autocomplete="off" />
+          </div>
+          <p class="setting-note setting-warn">
+            Scope this token to <strong>Workers AI → Read/Run</strong> only — never use a
+            global API key. It is stored on this device and sent only to api.cloudflare.com.
+          </p>
+          <div class="setting-row">
+            <label for="setting-brave-api-key" title="Brave Search API key (alternative to Serper for web search tool execution).">Brave API Key</label>
+            <input type="password" id="setting-brave-api-key" autocomplete="off" />
+          </div>
+          <div class="setting-row">
+            <label for="setting-serper-api-key" title="Serper.dev API key (alternative to Brave for web search tool execution).">Serper API Key</label>
+            <input type="password" id="setting-serper-api-key" autocomplete="off" />
+          </div>
+          <p class="setting-note">
+            Saved automatically. Brave or Serper key required for web search.
+          </p>
         </div>
-        <div class="setting-row">
-          <label for="setting-wl-id" title="Whitelabel ID for Divinci RAG/vector API">Whitelabel ID</label>
-          <input type="text" id="setting-wl-id" autocomplete="off" />
-        </div>
-        <p class="setting-note">
-          Saved automatically. Page status pill in sidebar requires these.
-        </p>
-      </details>
-      <details open>
-        <summary>Divinci account (staging) — recommended</summary>
-        <div class="setting-row setting-row-checkbox" hidden>
-          <label for="setting-use-divinci-account" title="Proxy tool-calling through your signed-in Divinci account instead of pasting Cloudflare/Brave/Serper tokens.">Use my Divinci account</label>
-          <input type="checkbox" id="setting-use-divinci-account" />
-        </div>
-        <div class="setting-row">
-          <button id="divinci-signin-btn" class="account-action" type="button">Sign in with Divinci</button>
-        </div>
-        <p class="setting-note" id="divinci-auth-status">Not signed in.</p>
-        <div class="setting-row">
-          <label for="setting-divinci-workspace-id" title="Workspace (whitelabel) id the account chat targets. You must own this workspace.">Workspace ID</label>
-          <input type="text" id="setting-divinci-workspace-id" autocomplete="off" placeholder="24-hex id" />
-        </div>
-        <div class="setting-row">
-          <label for="setting-divinci-release-id" title="Optional. Pin a release; its toolRouting.enabled gates server-side web-search.">Release ID (optional)</label>
-          <input type="text" id="setting-divinci-release-id" autocomplete="off" />
-        </div>
-        <p class="setting-note">
-          When on, tool-calling runs on stage.divinci.app with server-held keys —
-          no Cloudflare/Brave/Serper tokens needed. Web search requires a release
-          with tool routing enabled.
-        </p>
-      </details>
-      <details>
-        <summary>Tool APIs (Kimi K2.7-Code + web search) — manual fallback</summary>
-        <div class="setting-row">
-          <label for="setting-cf-account-id" title="Cloudflare Account ID for Workers AI API. Required for Kimi tool routing.">CF Account ID</label>
-          <input type="text" id="setting-cf-account-id" autocomplete="off" placeholder="acct_..." />
-        </div>
-        <div class="setting-row">
-          <label for="setting-cf-api-token" title="Cloudflare API Token scoped to Workers AI (Read/Run) only. Required for Kimi tool routing.">CF API Token</label>
-          <input type="password" id="setting-cf-api-token" autocomplete="off" />
-        </div>
-        <p class="setting-note setting-warn">
-          Scope this token to <strong>Workers AI → Read/Run</strong> only — never use a
-          global API key. It is stored on this device and sent only to api.cloudflare.com.
-        </p>
-        <div class="setting-row">
-          <label for="setting-brave-api-key" title="Brave Search API key (alternative to Serper for web search tool execution).">Brave API Key</label>
-          <input type="password" id="setting-brave-api-key" autocomplete="off" />
-        </div>
-        <div class="setting-row">
-          <label for="setting-serper-api-key" title="Serper.dev API key (alternative to Brave for web search tool execution).">Serper API Key</label>
-          <input type="password" id="setting-serper-api-key" autocomplete="off" />
-        </div>
-        <p class="setting-note">
-          Saved automatically. Brave or Serper key required for web search.
-        </p>
       </details>
     </section>
 

@@ -74,7 +74,7 @@ async function postToken(body: string): Promise<DivinciAuthTokens> {
 
 // ---- interactive sign-in ----
 
-export async function signIn(): Promise<{
+export async function signIn(opts?: { signup?: boolean }): Promise<{
   signedIn: boolean
   email?: string
   name?: string
@@ -86,7 +86,7 @@ export async function signIn(): Promise<{
     const codeVerifier = generateCodeVerifier()
     const state = generateState()
     const codeChallenge = await computeCodeChallenge(codeVerifier)
-    const authUrl = buildAuthorizeUrl({ redirectUri, codeChallenge, state })
+    const authUrl = buildAuthorizeUrl({ redirectUri, codeChallenge, state, signup: opts?.signup })
 
     const redirectResponse = await chrome.identity.launchWebAuthFlow({
       url: authUrl,
@@ -147,6 +147,13 @@ function refreshTokens(current: DivinciAuthTokens): Promise<DivinciAuthTokens | 
       // Carry the prior refresh token forward if the response omitted one
       // (defensive — rotation normally returns a fresh one).
       if (!refreshed.refreshToken) refreshed.refreshToken = current.refreshToken
+      // Carry the profile forward: Auth0 refresh responses usually omit the
+      // id_token, so parseTokenResponse leaves email/name/picture undefined.
+      // Without this, the popup avatar/name would vanish ~1h in (on first
+      // refresh). The profile is stable across the session, so preserve it.
+      if (!refreshed.email) refreshed.email = current.email
+      if (!refreshed.name) refreshed.name = current.name
+      if (!refreshed.picture) refreshed.picture = current.picture
       await setStoredTokens(refreshed)
       return refreshed
     } catch (err) {
@@ -273,7 +280,7 @@ export function setupDivinciAuthBridge(): void {
     (msg: Message, _sender, sendResponse: (r?: unknown) => void) => {
       switch (msg?.type) {
         case 'internal:divinci-signin':
-          void signIn().then((r) => {
+          void signIn({ signup: msg.signup }).then((r) => {
             const resp: InternalDivinciAuthStatusResponse = {
               type: 'internal:divinci-auth-status-response',
               signedIn: r.signedIn,

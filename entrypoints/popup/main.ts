@@ -16,7 +16,7 @@ import type {
   InternalStatusResponse,
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
-import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_API_KEY, STORAGE_KEY_WHITELABEL_ID, type ModelId } from '@/shared/models'
+import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, type ModelId } from '@/shared/models'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -40,16 +40,12 @@ const els = {
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
   tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
   maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
-  apiKeyInput: document.getElementById('setting-api-key') as HTMLInputElement,
-  wlIdInput: document.getElementById('setting-wl-id') as HTMLInputElement,
   cfAccountIdInput: document.getElementById('setting-cf-account-id') as HTMLInputElement,
   cfApiTokenInput: document.getElementById('setting-cf-api-token') as HTMLInputElement,
   braveApiKeyInput: document.getElementById('setting-brave-api-key') as HTMLInputElement,
   serperApiKeyInput: document.getElementById('setting-serper-api-key') as HTMLInputElement,
   useAccountToggle: document.getElementById('setting-use-divinci-account') as HTMLInputElement,
   useAccountRow: document.querySelector<HTMLElement>('.setting-row-checkbox')!,
-  signinBtn: document.getElementById('divinci-signin-btn') as HTMLButtonElement,
-  authStatus: document.getElementById('divinci-auth-status')!,
   workspaceIdInput: document.getElementById('setting-divinci-workspace-id') as HTMLInputElement,
   releaseIdInput: document.getElementById('setting-divinci-release-id') as HTMLInputElement,
   // Header account widget
@@ -303,24 +299,6 @@ for (const input of [els.tempInput, els.maxTokensInput]) {
   })
 }
 
-// ---- RAG config (no debounce — commit on each change) --------------------
-async function saveRagConfig(): Promise<void> {
-  void chrome.storage.local.set({
-    [STORAGE_KEY_API_KEY]: els.apiKeyInput.value,
-    [STORAGE_KEY_WHITELABEL_ID]: els.wlIdInput.value,
-  })
-}
-
-// Load stored RAG config and populate inputs. Commit changes immediately on
-// input (no debounce — typing a key is fast enough for storage I/O).
-async function loadRagConfig(): Promise<void> {
-  const stored = await chrome.storage.local.get([STORAGE_KEY_API_KEY, STORAGE_KEY_WHITELABEL_ID]) as Record<string, string | undefined>
-  els.apiKeyInput.value = stored[STORAGE_KEY_API_KEY] ?? ''
-  els.wlIdInput.value = stored[STORAGE_KEY_WHITELABEL_ID] ?? ''
-}
-els.apiKeyInput.addEventListener('input', () => { void saveRagConfig() })
-els.wlIdInput.addEventListener('input', () => { void saveRagConfig() })
-
 // ---- Tool API credentials (immediate commit, no debounce) ---------------
 function sendToolApiCredentials(): void {
   void sendInternal({
@@ -427,17 +405,11 @@ function renderHeaderAccount(resp: InternalDivinciAuthStatusResponse | null): vo
   els.headerEmail.textContent = resp?.email ?? ''
 }
 
+// Auth state now drives ONLY the header account widget + the conditional
+// account-mode checkbox. The header owns all sign up / sign in / sign out UI;
+// the old body sign-in button + status line were removed.
 function renderAuthStatus(resp: InternalDivinciAuthStatusResponse | null): void {
-  const signedIn = Boolean(resp?.signedIn)
-  lastAuthSignedIn = signedIn
-  els.signinBtn.textContent = signedIn ? 'Sign out' : 'Sign in with Divinci'
-  if (resp?.error) {
-    els.authStatus.textContent = `Sign-in failed: ${resp.error}`
-  } else if (signedIn) {
-    els.authStatus.textContent = resp?.email ? `Signed in as ${resp.email}.` : 'Signed in.'
-  } else {
-    els.authStatus.textContent = 'Not signed in.'
-  }
+  lastAuthSignedIn = Boolean(resp?.signedIn)
   renderHeaderAccount(resp)
   updateUseAccountRowVisibility()
 }
@@ -482,15 +454,17 @@ document.addEventListener('click', (e) => {
   els.headerAvatarBtn.setAttribute('aria-expanded', 'false')
 })
 
-// Header sign-in / sign-out wire to the SAME messages the section uses.
+// The signed-out header button is the sole entry point for creating an
+// account — it opens the Auth0 signup screen (screen_hint=signup).
 els.headerSigninBtn.addEventListener('click', async () => {
   els.headerSigninBtn.disabled = true
-  els.headerSigninBtn.textContent = 'Opening Divinci sign-in…'
+  els.headerSigninBtn.textContent = 'Opening Divinci…'
   const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
     type: 'internal:divinci-signin',
+    signup: true,
   })
   els.headerSigninBtn.disabled = false
-  els.headerSigninBtn.textContent = 'Sign in with Divinci'
+  els.headerSigninBtn.textContent = 'Sign up'
   renderAuthStatus(resp)
 })
 
@@ -502,20 +476,6 @@ els.headerSignoutBtn.addEventListener('click', async () => {
   els.headerSignoutBtn.disabled = false
   els.headerAccountMenu.hidden = true
   els.headerAvatarBtn.setAttribute('aria-expanded', 'false')
-  renderAuthStatus(resp)
-})
-
-els.signinBtn.addEventListener('click', async () => {
-  const status = await sendInternal<InternalDivinciAuthStatusResponse>({
-    type: 'internal:divinci-auth-status',
-  })
-  const signedIn = Boolean(status?.signedIn)
-  els.signinBtn.disabled = true
-  els.authStatus.textContent = signedIn ? 'Signing out…' : 'Opening Divinci sign-in…'
-  const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
-    type: signedIn ? 'internal:divinci-signout' : 'internal:divinci-signin',
-  })
-  els.signinBtn.disabled = false
   renderAuthStatus(resp)
 })
 
@@ -575,7 +535,6 @@ els.clearCacheBtn.addEventListener('click', async () => {
 // Initial paint + steady poll while popup is open
 void poll()
 void refreshStorageEstimate()
-void loadRagConfig()
 void loadToolApiCredentials()
 void loadAccountSettings()
 void refreshAuthStatus()
