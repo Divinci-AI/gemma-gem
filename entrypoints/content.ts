@@ -38,6 +38,8 @@ import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
+import { LocalTranscriptStore } from '@/chat-core/local-transcript-store'
+import { IndexedDbConversationBackend } from '@/chat-core/idb-conversation-backend'
 import type { ChatMessage as CoreChatMessage } from '@/chat-core/inference'
 import type {
   DivinciExternalEvent,
@@ -50,6 +52,8 @@ import type {
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
 const STORAGE_KEY_OPEN = 'divinci_sidebar_open'
+const STORAGE_KEY_EXPANDED = 'divinci_sidebar_expanded'
+const STORAGE_KEY_ACTIVE_CONV = 'divinci_active_conversation'
 const STATUS_POLL_MS = 1500
 
 type ChatRole = 'user' | 'assistant'
@@ -101,6 +105,9 @@ function mountSidebar(
 
   const el = {
     launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
+    expandBtn: root.querySelector<HTMLButtonElement>('.dls-expand')!,
+    newChatBtn: root.querySelector<HTMLButtonElement>('.dls-new-chat')!,
+    convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
@@ -138,6 +145,27 @@ function mountSidebar(
   // ground the chat via page-context. Only set when the url passed the policy.
   let groundableUrl: string | null = null
 
+  // ---- Conversation persistence (local IndexedDB; account mirroring is a
+  // follow-up once the SDK/OAuth transcript gaps are filled) ----------------
+  const store = new LocalTranscriptStore(new IndexedDbConversationBackend())
+  let activeConversationId: string | null = null
+  // Serialize appends so user/assistant writes to the same record don't race.
+  let persistQueue: Promise<void> = Promise.resolve()
+
+  function persistMessage(role: 'user' | 'assistant', content: string): void {
+    persistQueue = persistQueue
+      .then(async () => {
+        if (activeConversationId == null) {
+          const conv = await store.create()
+          activeConversationId = conv.id
+          void chrome.storage.local.set({ [STORAGE_KEY_ACTIVE_CONV]: conv.id })
+        }
+        await store.appendMessage(activeConversationId, { role, content })
+        if (root.classList.contains('dls-expanded')) void renderConvList()
+      })
+      .catch(() => { /* persistence is best-effort; never break the chat */ })
+  }
+
   function newRequestId(): string {
     return `sidebar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
@@ -165,6 +193,7 @@ function mountSidebar(
       onUserMessage: (m) => {
         el.empty.hidden = true
         appendBubble('user', m.content)
+        persistMessage('user', m.content)
       },
       onAssistantStart: () => {
         streamingBubble = appendBubble('assistant', '…')
@@ -187,10 +216,14 @@ function mountSidebar(
           streamingBubble.textContent = m.content || '(no response)'
           delete streamingBubble.dataset.placeholder
         }
+        persistMessage('assistant', m.content)
         finishGeneration()
       },
-      onAborted: () => {
+      onAborted: (partial) => {
         if (streamingBubble?.dataset.placeholder) streamingBubble.textContent = '(stopped)'
+        // Persist the partial assistant turn so it survives (matches it being
+        // kept in the in-memory history).
+        if (partial) persistMessage('assistant', partial)
         finishGeneration()
       },
       onError: (err) => {
@@ -606,6 +639,84 @@ function mountSidebar(
     return messages
   }
 
+  // ---- Conversations (full-screen rail) -----------------------------------
+  function setExpanded(expanded: boolean, persist = true): void {
+    root.classList.toggle('dls-expanded', expanded)
+    el.expandBtn.title = expanded ? 'Collapse' : 'Expand'
+    el.expandBtn.setAttribute('aria-label', expanded ? 'Collapse' : 'Expand to full screen')
+    if (expanded) void renderConvList()
+    if (persist) void chrome.storage.local.set({ [STORAGE_KEY_EXPANDED]: expanded })
+  }
+
+  // Re-render the thread DOM from a message list (e.g. after switching chats).
+  function renderThread(messages: CoreChatMessage[]): void {
+    el.messages.querySelectorAll('.dls-bubble').forEach((b) => b.remove())
+    el.empty.hidden = messages.length > 0
+    for (const m of messages) {
+      if (m.role === 'system') continue
+      appendBubble(m.role, m.content)
+    }
+    scrollToBottom()
+  }
+
+  async function openConversation(id: string): Promise<void> {
+    const conv = await store.get(id)
+    if (!conv) return
+    activeConversationId = id
+    void chrome.storage.local.set({ [STORAGE_KEY_ACTIVE_CONV]: id })
+    const msgs: CoreChatMessage[] = conv.messages.map((m) => ({ role: m.role, content: m.content }))
+    controller.setHistory(msgs)
+    renderThread(msgs)
+    void renderConvList()
+  }
+
+  // Start a fresh chat — the conversation record is created lazily on the first
+  // message (persistMessage), so empty "New chat" rows don't pile up.
+  function newChat(): void {
+    activeConversationId = null
+    void chrome.storage.local.remove(STORAGE_KEY_ACTIVE_CONV)
+    controller.setHistory([])
+    renderThread([])
+    void renderConvList()
+    el.input.focus()
+  }
+
+  async function deleteConversation(id: string): Promise<void> {
+    await store.remove(id)
+    if (id === activeConversationId) newChat()
+    else void renderConvList()
+  }
+
+  async function renderConvList(): Promise<void> {
+    const items = await store.list()
+    el.convList.replaceChildren()
+    for (const it of items) {
+      const item = document.createElement('div')
+      item.className = 'dls-conv-item' + (it.id === activeConversationId ? ' is-active' : '')
+      const title = document.createElement('span')
+      title.className = 'dls-conv-title'
+      title.textContent = it.title
+      title.title = it.title
+      const del = document.createElement('button')
+      del.className = 'dls-conv-del'
+      del.type = 'button'
+      del.textContent = '×'
+      del.title = 'Delete chat'
+      item.append(title, del)
+      item.addEventListener('click', () => void openConversation(it.id))
+      title.addEventListener('dblclick', (e) => {
+        e.stopPropagation()
+        const next = window.prompt('Rename chat', it.title)
+        if (next != null) void store.rename(it.id, next).then(() => renderConvList())
+      })
+      del.addEventListener('click', (e) => {
+        e.stopPropagation()
+        void deleteConversation(it.id)
+      })
+      el.convList.appendChild(item)
+    }
+  }
+
   // ---- Rendering ----------------------------------------------------------
   function appendBubble(role: ChatRole, text: string): HTMLElement {
     const bubble = document.createElement('div')
@@ -780,6 +891,8 @@ function mountSidebar(
     void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: true })
   })
   el.close.addEventListener('click', () => setOpen(false))
+  el.expandBtn.addEventListener('click', () => setExpanded(!root.classList.contains('dls-expanded')))
+  el.newChatBtn.addEventListener('click', newChat)
   el.loadBtn.addEventListener('click', loadModel)
   el.send.addEventListener('click', () => (controller.isBusy() ? stopChat() : sendChat()))
   el.input.addEventListener('input', autosize)
@@ -813,10 +926,16 @@ function mountSidebar(
 
   // ---- Initial paint ------------------------------------------------------
   renderModelState()
-  void chrome.storage.local.get(STORAGE_KEY_OPEN).then((stored) => {
-    if (disposed) return
-    if (stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
-  })
+  void chrome.storage.local
+    .get([STORAGE_KEY_OPEN, STORAGE_KEY_EXPANDED, STORAGE_KEY_ACTIVE_CONV])
+    .then((stored) => {
+      if (disposed) return
+      if (stored[STORAGE_KEY_EXPANDED] === true) setExpanded(true, false)
+      // Restore the last conversation's transcript into the thread.
+      const convId = stored[STORAGE_KEY_ACTIVE_CONV]
+      if (typeof convId === 'string') void openConversation(convId)
+      if (stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
+    })
 
   return {
     dispose: () => {
@@ -874,26 +993,43 @@ const TEMPLATE = /* html */ `
           <span class="dls-account-label">Local only</span>
         </button>
       </div>
-      <button class="dls-close" aria-label="Close">×</button>
+      <div class="dls-header-actions">
+        <button class="dls-expand" aria-label="Expand to full screen" title="Expand">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path class="dls-expand-open" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/>
+            <path class="dls-expand-collapse" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5" hidden/>
+          </svg>
+        </button>
+        <button class="dls-close" aria-label="Close">×</button>
+      </div>
     </header>
 
-    <div class="dls-load-card">
-      <button class="dls-load-btn">Load model</button>
-      <p class="dls-load-hint"></p>
-      <div class="dls-progress" hidden>
-        <div class="dls-progress-track"><div class="dls-progress-fill"></div></div>
-        <p class="dls-progress-text"></p>
+    <div class="dls-body">
+      <nav class="dls-rail" aria-label="Conversations">
+        <button class="dls-new-chat" type="button">+ New chat</button>
+        <div class="dls-conv-list"></div>
+      </nav>
+
+      <div class="dls-main">
+        <div class="dls-load-card">
+          <button class="dls-load-btn">Load model</button>
+          <p class="dls-load-hint"></p>
+          <div class="dls-progress" hidden>
+            <div class="dls-progress-track"><div class="dls-progress-fill"></div></div>
+            <p class="dls-progress-text"></p>
+          </div>
+        </div>
+
+        <div class="dls-messages">
+          <p class="dls-empty">Ask Gemma 4 anything — it runs entirely on your GPU, on any page.</p>
+        </div>
+
+        <footer class="dls-footer">
+          <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
+          <button class="dls-send" data-mode="send" disabled>Send</button>
+        </footer>
       </div>
     </div>
-
-    <div class="dls-messages">
-      <p class="dls-empty">Ask Gemma 4 anything — it runs entirely on your GPU, on any page.</p>
-    </div>
-
-    <footer class="dls-footer">
-      <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
-      <button class="dls-send" data-mode="send" disabled>Send</button>
-    </footer>
   </aside>
 `
 
@@ -1040,6 +1176,99 @@ const SIDEBAR_CSS = /* css */ `
     padding: 0 4px;
   }
   .dls-close:hover { color: var(--dls-text); }
+  .dls-header-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
+  .dls-expand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--dls-muted);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+  }
+  .dls-expand:hover { color: var(--dls-text); background: var(--dls-bg-2); }
+  .dls-expand-collapse { display: none; }
+  .dls-root.dls-expanded .dls-expand-open { display: none; }
+  .dls-root.dls-expanded .dls-expand-collapse { display: inline; }
+
+  /* Body splits into the conversation rail (expanded only) + the main column. */
+  .dls-body { display: flex; flex: 1; min-height: 0; }
+  .dls-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
+  .dls-rail { display: none; }
+
+  /* Full-screen expanded layout (ChatGPT-style): panel fills the viewport, the
+     rail appears on the left, and the thread/composer center for readability. */
+  .dls-root.dls-expanded .dls-panel {
+    width: 100vw;
+    max-width: 100vw;
+    border-left: none;
+  }
+  .dls-root.dls-expanded .dls-rail {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 264px;
+    flex-shrink: 0;
+    padding: 10px;
+    border-right: 1px solid var(--dls-border);
+    overflow-y: auto;
+    background: var(--dls-bg-2);
+  }
+  .dls-root.dls-expanded .dls-messages,
+  .dls-root.dls-expanded .dls-footer {
+    width: 100%;
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .dls-new-chat {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--dls-border);
+    background: var(--dls-accent);
+    color: #fff;
+    cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .dls-new-chat:hover { background: var(--dls-accent-hover); }
+  .dls-conv-list { display: flex; flex-direction: column; gap: 2px; }
+  .dls-conv-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--dls-text);
+    font-size: 13px;
+  }
+  .dls-conv-item:hover { background: var(--dls-bg); }
+  .dls-conv-item.is-active { background: var(--dls-bg); border: 1px solid var(--dls-border); }
+  .dls-conv-title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dls-conv-del {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--dls-muted);
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+    opacity: 0;
+  }
+  .dls-conv-item:hover .dls-conv-del { opacity: 0.7; }
+  .dls-conv-del:hover { opacity: 1; color: #ff9b9b; }
 
   /* Model + account chips now live inline in .dls-header (the standalone
      .dls-chips subheader row was removed). */
