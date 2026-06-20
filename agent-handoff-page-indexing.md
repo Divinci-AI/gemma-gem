@@ -111,17 +111,40 @@ Two layers + robots:
 - **P4 — background pipeline:** scheduled worker that refreshes stale WWW RAG
   pages around the clock.
 
-## 7. Decisions to confirm before P1
+## 7. Decisions (LOCKED 2026-06-19)
 
-1. **WWW RAG = one shared whitelabel project** (simplest; fits the existing
-   per-whitelabel architecture) vs. a brand-new global model. Recommend: shared
-   project for v1.
-2. **Shared-read auth**: any authenticated Divinci user can read WWW RAG page
-   context (yes/no; rate-limited).
-3. **Content-hash parity**: adopt `sha256(normalizedVisibleText)` computed in
-   both crawler + extension (precise) vs. `lastCrawledAt`-age staleness (simple)
-   for v1.
-4. **Contribute default**: does the extension auto-`submit-url` unknown pages
-   the user visits (opt-out), or only on explicit action? (Privacy + cost.)
-5. **Blacklist seed**: confirm the sensitive-surface categories to hard-skip
-   client-side.
+1. **Storage** = ✅ **one shared system-owned project** (`WWW_RAG`). Reuses the
+   existing per-whitelabel RAG/crawl/by-url/chunk machinery.
+2. **Read auth** = ✅ **any signed-in Divinci user** (rate-limited). Read
+   endpoints resolve `target=WWW_RAG` server-side and are NOT owner-gated.
+3. **Freshness** = ✅ **content-hash parity** — `sha256(normalizedVisibleText)`
+   computed identically in crawler + extension, stored on the page doc;
+   `page-status?...&hash=` answers fresh/stale directly. (Keep `lastCrawledAt`
+   as a secondary signal so the background pipeline can refresh.)
+4. **Contribute** = ✅ **auto-submit**, with the privacy guardrails in §8.
+
+## 8. Contribute privacy/compliance posture (auto-submit)
+
+Auto-submitting *visited URLs* is browsing-activity collection — sensitive even
+though crawled CONTENT is public. **Get counsel to sign off before CWS publish.**
+Engineering guardrails to keep auto-submit defensible:
+
+- **Disclose** in the privacy policy + CWS Data Safety ("collects web browsing
+  activity to maintain a shared public-web index") and ship a clear **opt-out**
+  toggle. (CWS Limited-Use likely requires both; EU may push toward opt-in.)
+- **Sanitize before send**: submit origin+pathname only — **strip query string
+  + fragment** (they carry tokens/PII), drop capability/by-obscurity URLs
+  (share links, magic links, pre-signed URLs), never send non-`http(s)`,
+  localhost, or private-IP/non-standard-port hosts.
+- **Scope to engaged pages** (sidebar opened / user asks about the page) rather
+  than every background tab — clearly user-facing, far easier under CWS
+  Limited Use, still feeds the corpus from real usage.
+- Server **denylist + per-user rate limit + dedup** (§4) remain mandatory.
+
+## 9. Blacklist seed (client quick-skip — confirm)
+
+Hard-skip categories before any `page-status`/`submit-url`: non-`http(s)` &
+extension/internal pages; `localhost`/private-IP/non-standard ports; auth/login
+& account pages; banking/financial; healthcare/patient portals; webmail; URLs
+with query strings or fragments (until sanitization lands). The authoritative
+denylist lives server-side (§4).
