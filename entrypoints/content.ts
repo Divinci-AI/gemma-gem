@@ -74,6 +74,22 @@ const PANEL_WIDTH_MAX = 760
 const STATUS_POLL_MS = 1500
 
 type ChatRole = 'user' | 'assistant'
+
+// Minimal Web Speech API shapes (not in the TS DOM lib). Used for dictation.
+interface SpeechRecognitionResultLike {
+  resultIndex: number
+  results: ArrayLike<ArrayLike<{ transcript: string }>>
+}
+interface SpeechRecognitionLike {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  start(): void
+  stop(): void
+  onresult: ((e: SpeechRecognitionResultLike) => void) | null
+  onend: (() => void) | null
+  onerror: (() => void) | null
+}
 interface ChatMessage {
   role: ChatRole
   content: string
@@ -151,6 +167,7 @@ function mountSidebar(
     empty: root.querySelector<HTMLElement>('.dls-empty')!,
     input: root.querySelector<HTMLTextAreaElement>('.dls-input')!,
     send: root.querySelector<HTMLButtonElement>('.dls-send')!,
+    mic: root.querySelector<HTMLButtonElement>('.dls-mic')!,
     disclaimerText: root.querySelector<HTMLElement>('.dls-disclaimer-text')!,
   }
   el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
@@ -1134,6 +1151,60 @@ function mountSidebar(
     })
   }
 
+  // Per-message hover quick-menu: Copy + Speak (TTS via the browser's
+  // speechSynthesis — local, no account). Reads the bubble's text live at click
+  // time so it works for streamed/markdown bubbles too.
+  let speakingBubble: HTMLElement | null = null
+  function toggleSpeak(bubble: HTMLElement, btn: HTMLButtonElement | null): void {
+    const synth = window.speechSynthesis
+    if (!synth) return
+    if (speakingBubble === bubble) {
+      synth.cancel() // onend clears state below
+      return
+    }
+    synth.cancel()
+    const u = new SpeechSynthesisUtterance(bubble.textContent ?? '')
+    const clear = () => {
+      speakingBubble = null
+      btn?.classList.remove('dls-speaking')
+    }
+    u.onend = clear
+    u.onerror = clear
+    speakingBubble = bubble
+    btn?.classList.add('dls-speaking')
+    synth.speak(u)
+  }
+
+  function buildMsgActions(bubble: HTMLElement): HTMLElement {
+    const bar = document.createElement('div')
+    bar.className = 'dls-msg-actions'
+    const mk = (label: string, cls: string, svg: string, onClick: (b: HTMLButtonElement) => void): HTMLButtonElement => {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = `dls-msg-action ${cls}`
+      b.title = label
+      b.setAttribute('aria-label', label)
+      b.innerHTML = svg
+      b.addEventListener('click', () => onClick(b))
+      return b
+    }
+    const copyIcon = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10" fill="none" stroke="currentColor" stroke-width="2"/></svg>'
+    const speakIcon = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+    bar.appendChild(mk('Copy', 'dls-copy', copyIcon, (b) => {
+      void navigator.clipboard?.writeText(bubble.textContent ?? '').then(
+        () => {
+          b.classList.add('dls-acted')
+          window.setTimeout(() => b.classList.remove('dls-acted'), 900)
+        },
+        () => {},
+      )
+    }))
+    if (window.speechSynthesis) {
+      bar.appendChild(mk('Read aloud', 'dls-speak', speakIcon, (b) => toggleSpeak(bubble, b)))
+    }
+    return bar
+  }
+
   function appendBubble(role: ChatRole, text: string, markdown = false): HTMLElement {
     const row = document.createElement('div')
     row.className = `dls-row dls-row-${role === 'user' ? 'user' : 'assistant'}`
@@ -1141,15 +1212,19 @@ function mountSidebar(
     bubble.className = `dls-bubble dls-bubble-${role}`
     if (markdown) setBubbleMarkdown(bubble, text)
     else bubble.textContent = text
+    const wrap = document.createElement('div')
+    wrap.className = 'dls-bubble-wrap'
+    wrap.appendChild(bubble)
+    wrap.appendChild(buildMsgActions(bubble))
     const avatar = buildAvatar(role)
     // User: bubble then avatar (avatar sits bottom-right). Assistant: avatar
     // then bubble (avatar sits bottom-left).
     if (role === 'user') {
-      row.appendChild(bubble)
+      row.appendChild(wrap)
       row.appendChild(avatar)
     } else {
       row.appendChild(avatar)
-      row.appendChild(bubble)
+      row.appendChild(wrap)
     }
     el.messages.appendChild(row)
     scrollToBottom()
@@ -1414,6 +1489,49 @@ function mountSidebar(
     }
   })
 
+  // ---- Speech-to-text dictation (Web Speech API; browser-native, no account)
+  setupDictation()
+  function setupDictation(): void {
+    const w = window as unknown as {
+      SpeechRecognition?: new () => SpeechRecognitionLike
+      webkitSpeechRecognition?: new () => SpeechRecognitionLike
+    }
+    const Ctor = w.SpeechRecognition || w.webkitSpeechRecognition
+    if (!Ctor) return // unsupported → the mic button stays hidden
+    el.mic.hidden = false
+    let rec: SpeechRecognitionLike | null = null
+    let listening = false
+    let baseText = ''
+    el.mic.addEventListener('click', () => {
+      if (listening) {
+        try { rec?.stop() } catch { /* ignore */ }
+        return
+      }
+      rec = new Ctor()
+      rec.lang = navigator.language || 'en-US'
+      rec.interimResults = true
+      rec.continuous = true
+      baseText = el.input.value.trim()
+      rec.onresult = (e: SpeechRecognitionResultLike) => {
+        let txt = ''
+        for (let i = e.resultIndex; i < e.results.length; i++) txt += e.results[i][0].transcript
+        el.input.value = (baseText ? baseText + ' ' : '') + txt
+        autosize()
+      }
+      const done = () => {
+        listening = false
+        el.mic.classList.remove('dls-listening')
+      }
+      rec.onend = done
+      rec.onerror = done
+      try {
+        rec.start()
+        listening = true
+        el.mic.classList.add('dls-listening')
+      } catch { /* start can throw if already running */ }
+    })
+  }
+
   // Sync open-state across tabs/popup when toggled elsewhere.
   const storageListener = (
     changes: Record<string, chrome.storage.StorageChange>,
@@ -1593,8 +1711,15 @@ const TEMPLATE = /* html */ `
         <footer class="dls-footer">
           <div class="dls-compose-row">
             <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
+            <button class="dls-mic" type="button" aria-label="Dictate (speech to text)" title="Dictate" hidden>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+                <path d="M5 11a7 7 0 0 0 14 0M12 18v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+            </button>
             <button class="dls-send" data-mode="send" disabled>Send</button>
           </div>
+          <p class="dls-safety">Gemma is an AI model and can make mistakes — verify important information.</p>
           <p class="dls-disclaimer">
             <span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span>
             <a class="dls-disclaimer-link" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer">Privacy</a>
@@ -2114,6 +2239,63 @@ const SIDEBAR_CSS = /* css */ `
     border-bottom-left-radius: 4px;
   }
   .dls-bubble-error { color: #ff9b9b; border-color: #4a3a3a; }
+
+  /* Bubble + its hover quick-menu (Copy / Read aloud), revealed below on hover. */
+  .dls-bubble-wrap { display: flex; flex-direction: column; min-width: 0; }
+  .dls-row-user .dls-bubble-wrap { align-items: flex-end; }
+  .dls-msg-actions {
+    display: flex;
+    gap: 2px;
+    margin-top: 3px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s ease;
+  }
+  .dls-row:hover .dls-msg-actions,
+  .dls-msg-actions:focus-within { opacity: 1; pointer-events: auto; }
+  .dls-msg-action {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--dls-muted);
+    cursor: pointer;
+  }
+  .dls-msg-action:hover { color: var(--dls-text); background: var(--dls-bg-2); }
+  .dls-msg-action.dls-acted { color: #3fcf8e; }
+  .dls-msg-action.dls-speaking { color: var(--dls-accent); }
+
+  /* Dictation mic button in the composer. */
+  .dls-mic {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 38px;
+    background: transparent;
+    border: 1px solid var(--dls-border);
+    border-radius: 8px;
+    color: var(--dls-muted);
+    cursor: pointer;
+  }
+  .dls-mic:hover { color: var(--dls-text); border-color: var(--dls-accent); }
+  .dls-mic.dls-listening { color: #fff; background: var(--dls-accent); border-color: var(--dls-accent); animation: dls-dot-pulse 1.2s ease-in-out infinite; }
+  .dls-mic[hidden] { display: none; }
+
+  /* AI-safety disclaimer — always visible above the page-reading note. */
+  .dls-safety {
+    margin: 0;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--dls-muted);
+    text-align: center;
+    opacity: 0.85;
+  }
 
   /* Rendered-Markdown assistant bubbles (block elements handle their own
      spacing, so drop pre-wrap which would double the gaps). */
