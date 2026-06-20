@@ -1,13 +1,54 @@
 /* Popup is constrained to ~360 px wide; let it self-size in height. */
 * { box-sizing: border-box; }
 
+/* ---- Theme palette ------------------------------------------------------
+   Dark is the default at :root. "System" mode = no [data-theme] attr → the
+   prefers-color-scheme media query flips it to light on light OSes. Explicit
+   Light/Dark set [data-theme] on <html> (popup main.ts) and win over system.
+   Structural colors are variables; a few accent shades (toast red, cache
+   green) stay literal — they read on both themes. */
+:root {
+  --c-bg: #0f1117;
+  --c-surface: #181b25;
+  --c-border: #1f2230;
+  --c-border-2: #2a2e3e;
+  --c-text: #e8e8ec;
+  --c-muted: #8b91a7;
+  --c-muted-2: #6a708a;
+  --c-accent: #4f7df0;
+  --c-accent-hover: #3f6ad8;
+}
+:root[data-theme="light"],
+:root:not([data-theme]) { /* light values applied via the media query below */ }
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --c-bg: #f7f8fa;
+    --c-surface: #ffffff;
+    --c-border: #e3e6ed;
+    --c-border-2: #d0d5e0;
+    --c-text: #1a1d27;
+    --c-muted: #5c6373;
+    --c-muted-2: #767d8e;
+  }
+}
+:root[data-theme="light"] {
+  --c-bg: #f7f8fa;
+  --c-surface: #ffffff;
+  --c-border: #e3e6ed;
+  --c-border-2: #d0d5e0;
+  --c-text: #1a1d27;
+  --c-muted: #5c6373;
+  --c-muted-2: #767d8e;
+}
+
 html, body {
   margin: 0;
   padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   font-size: 13px;
-  color: #e8e8ec;
-  background: #0f1117;
+  color: var(--c-text);
+  background: var(--c-bg);
   width: 340px;
 }
 
@@ -16,7 +57,7 @@ header {
   align-items: center;
   gap: 10px;
   padding: 14px 16px 12px;
-  border-bottom: 1px solid #1f2230;
+  border-bottom: 1px solid var(--c-border);
 }
 
 header h1 {
@@ -34,7 +75,7 @@ header h1 {
 .subtitle {
   margin: 2px 0 0;
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--c-muted);
 }
 
 /* ---- Header account widget ------------------------------------------- */
@@ -45,8 +86,8 @@ header h1 {
 .header-account [hidden] { display: none; }
 
 .header-signin-btn {
-  border: 1px solid #4f7df0;
-  background: #4f7df0;
+  border: 1px solid var(--c-accent);
+  background: var(--c-accent);
   color: #fff;
   padding: 5px 10px;
   border-radius: 6px;
@@ -55,7 +96,7 @@ header h1 {
   font-weight: 500;
   white-space: nowrap;
 }
-.header-signin-btn:hover { background: #3f6ad8; }
+.header-signin-btn:hover { background: var(--c-accent-hover); }
 .header-signin-btn:disabled { opacity: 0.6; cursor: default; }
 
 .header-avatar-btn {
@@ -65,13 +106,13 @@ header h1 {
   padding: 0;
   width: 28px;
   height: 28px;
-  border: 1px solid #2a2e3e;
+  border: 1px solid var(--c-border-2);
   border-radius: 50%;
   background: transparent;
   cursor: pointer;
   overflow: hidden;
 }
-.header-avatar-btn:hover { border-color: #4f7df0; }
+.header-avatar-btn:hover { border-color: var(--c-accent); }
 
 .header-avatar {
   width: 28px;
@@ -87,7 +128,7 @@ header h1 {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #4f7df0;
+  background: var(--c-accent);
   color: #fff;
   font-weight: 600;
   text-transform: uppercase;
@@ -109,8 +150,8 @@ header h1 {
   right: 0;
   z-index: 10;
   width: 200px;
-  background: #181b25;
-  border: 1px solid #2a2e3e;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border-2);
   border-radius: 8px;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
   padding: 10px;
@@ -137,14 +178,14 @@ header h1 {
 .header-name {
   font-size: 12px;
   font-weight: 600;
-  color: #e8e8ec;
+  color: var(--c-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .header-email {
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--c-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -163,7 +204,7 @@ header h1 {
 
 #status {
   padding: 12px 16px;
-  border-bottom: 1px solid #1f2230;
+  border-bottom: 1px solid var(--c-border);
 }
 
 .status-row {
@@ -183,14 +224,14 @@ header h1 {
 }
 
 .status-label {
-  color: #8b91a7;
+  color: var(--c-muted);
   font-size: 12px;
 }
 
 .status-value {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
-  color: #e8e8ec;
+  color: var(--c-text);
 }
 
 .inline-action {
@@ -219,20 +260,20 @@ header h1 {
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--c-muted);
   margin-bottom: 4px;
 }
 
 .progress-bar {
   height: 6px;
-  background: #1f2230;
+  background: var(--c-border);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #4f7df0, #7c5ff6);
+  background: linear-gradient(90deg, var(--c-accent), #7c5ff6);
   width: 0%;
   transition: width 0.2s ease;
 }
@@ -247,14 +288,14 @@ header h1 {
   align-items: center;
   padding: 10px 12px;
   margin: 4px 0;
-  background: #181b25;
-  border: 1px solid #1f2230;
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
   border-radius: 6px;
   transition: border-color 0.15s ease;
 }
 
 .model-card.is-active {
-  border-color: #4f7df0;
+  border-color: var(--c-accent);
 }
 
 .model-card.is-loading {
@@ -325,12 +366,12 @@ header h1 {
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: #e8e8ec;
+  color: var(--c-text);
 }
 
 .model-size {
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--c-muted);
 }
 
 .cache-badge {
@@ -349,7 +390,7 @@ header h1 {
 .cache-badge[hidden] { display: none; }
 
 .model-cache-detail {
-  color: #8b91a7;
+  color: var(--c-muted);
 }
 
 .model-cache-detail.is-cached {
@@ -357,7 +398,7 @@ header h1 {
 }
 
 #settings {
-  border-top: 1px solid #1f2230;
+  border-top: 1px solid var(--c-border);
   padding: 4px 12px;
 }
 
@@ -368,16 +409,16 @@ header h1 {
 #settings summary {
   cursor: pointer;
   padding: 6px 4px;
-  color: #8b91a7;
+  color: var(--c-muted);
   user-select: none;
 }
 
-#settings summary:hover { color: #e8e8ec; }
+#settings summary:hover { color: var(--c-text); }
 
 /* Grouped subsections inside the single "Advanced settings" details. */
 .setting-group {
   padding: 4px 0 8px;
-  border-top: 1px solid #1f2230;
+  border-top: 1px solid var(--c-border);
 }
 .setting-group:first-of-type {
   border-top: none;
@@ -389,7 +430,7 @@ header h1 {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #8b91a7;
+  color: var(--c-muted);
 }
 
 .setting-row {
@@ -402,16 +443,27 @@ header h1 {
 
 .setting-row label {
   font-size: 12px;
-  color: #e8e8ec;
+  color: var(--c-text);
 }
+
+.setting-row select {
+  padding: 4px 6px;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-2);
+  border-radius: 4px;
+  color: var(--c-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+.setting-row select:focus { outline: none; border-color: var(--c-accent); }
 
 .setting-row input[type='number'] {
   width: 80px;
   padding: 4px 6px;
-  background: #0f1117;
-  border: 1px solid #2a2e3e;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-2);
   border-radius: 4px;
-  color: #e8e8ec;
+  color: var(--c-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   text-align: right;
@@ -421,16 +473,16 @@ header h1 {
 .setting-row input[type='text']:focus,
 .setting-row input[type='password']:focus {
   outline: none;
-  border-color: #4f7df0;
+  border-color: var(--c-accent);
 }
 
 .setting-row input[type='password'] {
   width: 140px;
   padding: 4px 6px;
-  background: #0f1117;
-  border: 1px solid #2a2e3e;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-2);
   border-radius: 4px;
-  color: #e8e8ec;
+  color: var(--c-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
@@ -438,10 +490,10 @@ header h1 {
 .setting-row input[type='text'] {
   width: 140px;
   padding: 4px 6px;
-  background: #0f1117;
-  border: 1px solid #2a2e3e;
+  background: var(--c-bg);
+  border: 1px solid var(--c-border-2);
   border-radius: 4px;
-  color: #e8e8ec;
+  color: var(--c-text);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
 }
@@ -449,7 +501,7 @@ header h1 {
 .setting-note {
   margin: 6px 4px 4px;
   font-size: 11px;
-  color: #6a708a;
+  color: var(--c-muted-2);
   font-style: italic;
 }
 
@@ -473,21 +525,21 @@ header h1 {
 
 .account-action {
   width: 100%;
-  border: 1px solid #4f7df0;
-  background: #4f7df0;
+  border: 1px solid var(--c-accent);
+  background: var(--c-accent);
   color: #fff;
   padding: 7px 10px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
 }
-.account-action:hover { background: #3f6ad8; }
+.account-action:hover { background: var(--c-accent-hover); }
 .account-action:disabled { opacity: 0.6; cursor: default; }
 
 .model-action,
 .unload-action {
-  border: 1px solid #4f7df0;
-  background: #4f7df0;
+  border: 1px solid var(--c-accent);
+  background: var(--c-accent);
   color: #fff;
   font-size: 12px;
   font-weight: 500;
@@ -522,16 +574,16 @@ header h1 {
 
 footer {
   padding: 10px 16px;
-  border-top: 1px solid #1f2230;
+  border-top: 1px solid var(--c-border);
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #8b91a7;
+  color: var(--c-muted);
 }
 
 footer a {
-  color: #4f7df0;
+  color: var(--c-accent);
   text-decoration: none;
 }
 

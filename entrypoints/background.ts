@@ -82,6 +82,7 @@ function setupSettingsPersistence(): void {
         useDivinciAccount: m.useDivinciAccount ?? prev.useDivinciAccount,
         divinciWorkspaceId: m.divinciWorkspaceId ?? prev.divinciWorkspaceId,
         divinciReleaseId: m.divinciReleaseId ?? prev.divinciReleaseId,
+        theme: m.theme ?? prev.theme,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -109,6 +110,7 @@ async function hydrateOffscreenSettings(): Promise<void> {
       useDivinciAccount: saved.useDivinciAccount,
       divinciWorkspaceId: saved.divinciWorkspaceId,
       divinciReleaseId: saved.divinciReleaseId,
+      theme: saved.theme,
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {
       log.warn('Settings hydrate sendMessage failed:', e)

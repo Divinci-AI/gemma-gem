@@ -705,6 +705,18 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-root * { box-sizing: border-box; }
 
+  /* Light mode follows the OS (system). The popup has an explicit theme
+     picker; the in-page sidebar tracks prefers-color-scheme for now. */
+  @media (prefers-color-scheme: light) {
+    .dls-root {
+      --dls-bg: #f7f8fa;
+      --dls-bg-2: #ffffff;
+      --dls-border: #e3e6ed;
+      --dls-text: #1a1d27;
+      --dls-muted: #5c6373;
+    }
+  }
+
   .dls-launcher {
     position: fixed;
     right: 0;

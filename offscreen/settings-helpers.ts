@@ -18,6 +18,7 @@ export function clampSettings(
     temperature?: unknown; maxNewTokens?: unknown;
     cfAccountId?: unknown; cfApiToken?: unknown; braveApiKey?: unknown; serperApiKey?: unknown;
     useDivinciAccount?: unknown; divinciWorkspaceId?: unknown; divinciReleaseId?: unknown;
+    theme?: unknown;
   },
   current: UserSettings
 ): UserSettings {
@@ -48,6 +49,9 @@ export function clampSettings(
   }
   if (typeof input.divinciReleaseId === 'string') {
     next.divinciReleaseId = input.divinciReleaseId
+  }
+  if (input.theme === 'system' || input.theme === 'light' || input.theme === 'dark') {
+    next.theme = input.theme
   }
   return next
 }

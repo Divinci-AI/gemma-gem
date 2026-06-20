@@ -38,6 +38,7 @@ const els = {
   loadButtons: document.querySelectorAll<HTMLButtonElement>('button[data-action="load"]'),
   cacheBadges: document.querySelectorAll<HTMLElement>('[data-cache-badge]'),
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
+  themeSelect: document.getElementById('setting-theme') as HTMLSelectElement,
   tempInput: document.getElementById('setting-temperature') as HTMLInputElement,
   maxTokensInput: document.getElementById('setting-max-tokens') as HTMLInputElement,
   cfAccountIdInput: document.getElementById('setting-cf-account-id') as HTMLInputElement,
@@ -532,11 +533,39 @@ els.clearCacheBtn.addEventListener('click', async () => {
   }, 1500)
 })
 
+// ---- Theme (system / light / dark) -------------------------------------
+type ThemeMode = 'system' | 'light' | 'dark'
+
+// 'system' = no [data-theme] attr → CSS prefers-color-scheme decides. Explicit
+// light/dark set the attr and win over the media query.
+function applyTheme(theme: ThemeMode): void {
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme)
+  } else {
+    document.documentElement.removeAttribute('data-theme')
+  }
+}
+
+async function loadTheme(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+  const s = stored[STORAGE_KEY_SETTINGS] as { theme?: ThemeMode } | undefined
+  const theme: ThemeMode = s?.theme ?? 'system'
+  els.themeSelect.value = theme
+  applyTheme(theme)
+}
+
+els.themeSelect.addEventListener('change', () => {
+  const theme = els.themeSelect.value as ThemeMode
+  applyTheme(theme)
+  void sendInternal({ type: 'internal:set-settings', theme })
+})
+
 // Initial paint + steady poll while popup is open
 void poll()
 void refreshStorageEstimate()
 void loadToolApiCredentials()
 void loadAccountSettings()
+void loadTheme()
 void refreshAuthStatus()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are

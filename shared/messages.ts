@@ -282,6 +282,7 @@ export interface InternalSetSettingsRequest {
   useDivinciAccount?: boolean
   divinciWorkspaceId?: string
   divinciReleaseId?: string
+  theme?: 'system' | 'light' | 'dark'
 }
 
 // ---- Divinci account (Auth0 PKCE) protocol: popup/offscreen ↔ background SW ----

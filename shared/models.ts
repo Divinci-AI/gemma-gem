@@ -94,6 +94,11 @@ export interface UserSettings {
    * whether the server runs the Kimi web-search loop for this request.
    */
   divinciReleaseId?: string
+  /**
+   * UI color theme. 'system' (default) follows the OS via prefers-color-scheme;
+   * 'light'/'dark' force it. Applied in the popup (and surfaced to the sidebar).
+   */
+  theme?: 'system' | 'light' | 'dark'
 }
 
 /**

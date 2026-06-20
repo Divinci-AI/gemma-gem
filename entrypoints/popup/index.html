@@ -88,6 +88,18 @@
         <summary>Advanced settings</summary>
 
         <div class="setting-group">
+          <p class="setting-subhead">Appearance</p>
+          <div class="setting-row">
+            <label for="setting-theme" title="System follows your OS light/dark setting.">Theme</label>
+            <select id="setting-theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-group">
           <p class="setting-subhead">Inference defaults</p>
           <div class="setting-row">
             <label for="setting-temperature" title="0 = deterministic / greedy. >0 enables sampling.">Temperature</label>
