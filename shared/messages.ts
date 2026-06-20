@@ -289,6 +289,32 @@ export interface InternalSetSettingsRequest {
   allowChatDataUse?: boolean
   /** Page reading: extract the current page's text on-device for context (default true). */
   readPageContent?: boolean
+  /** Workspace API key for the Tools panel (Skills + MCP server management). */
+  divinciApiKey?: string
+}
+
+/**
+ * Sidebar → SW: proxy a request to the Divinci /api/v1 surface using the stored
+ * workspace API key (X-API-Key). Powers the Tools panel (Skills + MCP servers),
+ * which can't use the OAuth account token (that surface is API-key only).
+ */
+export interface InternalDivinciApiRequest {
+  type: 'internal:divinci-api'
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE'
+  /** Path under the API base, e.g. "/api/v1/mcp-servers". */
+  path: string
+  body?: unknown
+}
+
+/** SW → sidebar: proxied response. `noKey` = no workspace API key configured. */
+export interface InternalDivinciApiResponse {
+  type: 'internal:divinci-api-response'
+  ok: boolean
+  status?: number
+  /** Parsed JSON body when available. */
+  data?: unknown
+  noKey?: boolean
+  error?: string
 }
 
 // ---- Divinci account (Auth0 PKCE) protocol: popup/offscreen ↔ background SW ----
@@ -561,6 +587,7 @@ export type InternalRequest =
   | InternalAccountMirrorRequest
   | InternalAccountShareRequest
   | InternalAccountEmojiRequest
+  | InternalDivinciApiRequest
   | InternalGetTabIdRequest
   | InternalOpenPopupRequest
 

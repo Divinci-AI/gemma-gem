@@ -21,6 +21,7 @@ import { setupInternalBridge } from '@/background/internal-bridge'
 import { setupWwwRagBridge } from '@/background/www-rag-bridge'
 import { setupDivinciAuthBridge } from '@/background/divinci-auth'
 import { setupTabSessionBridge } from '@/background/tab-session-bridge'
+import { setupDivinciApiProxy } from '@/background/divinci-api-proxy'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -89,6 +90,7 @@ function setupSettingsPersistence(): void {
         wwwRagGrounding: m.wwwRagGrounding ?? prev.wwwRagGrounding,
         allowChatDataUse: m.allowChatDataUse ?? prev.allowChatDataUse,
         readPageContent: m.readPageContent ?? prev.readPageContent,
+        divinciApiKey: m.divinciApiKey ?? prev.divinciApiKey,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -136,6 +138,7 @@ export default defineBackground(() => {
   setupWwwRagBridge()
   setupDivinciAuthBridge()
   setupTabSessionBridge()
+  setupDivinciApiProxy()
   setupSettingsPersistence()
 
   // Sidebar → "open the popup" (clicking the in-page model chip / avatar).

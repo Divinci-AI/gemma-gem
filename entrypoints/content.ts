@@ -143,6 +143,7 @@ function mountSidebar(
     expandLabel: root.querySelector<HTMLElement>('.dls-expand-label')!,
     menuBtn: root.querySelector<HTMLButtonElement>('.dls-menu-btn')!,
     menu: root.querySelector<HTMLElement>('.dls-menu')!,
+    toolsBtn: root.querySelector<HTMLButtonElement>('.dls-tools-btn')!,
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
     shareLink: root.querySelector<HTMLButtonElement>('.dls-share-link')!,
@@ -1190,6 +1191,182 @@ function mountSidebar(
     })
   }
 
+  // ---- Tools panel (Skills + MCP servers, via the workspace API key) -------
+  // The /api/v1 Skills + MCP-server surface is API-key (not OAuth), so the SW
+  // proxies these calls with the workspace API key from settings.
+  type DivinciApiResp = import('@/shared/messages').InternalDivinciApiResponse | undefined
+  function divinciApi(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, body?: unknown): Promise<DivinciApiResp> {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ type: 'internal:divinci-api', method, path, body }, (r) => {
+          void chrome.runtime.lastError
+          resolve(r as DivinciApiResp)
+        })
+      } catch {
+        resolve(undefined)
+      }
+    })
+  }
+
+  let toolsOverlay: HTMLElement | null = null
+  let toolsTab: 'skills' | 'mcp' = 'skills'
+
+  function noKeyNotice(): HTMLElement {
+    const p = document.createElement('p')
+    p.className = 'dls-tools-empty'
+    p.textContent =
+      'Add a Divinci workspace API key in the extension popup (Settings → Divinci Workspace API Key) to manage Skills & MCP servers.'
+    return p
+  }
+
+  function openToolsPanel(): void {
+    if (!toolsOverlay) {
+      toolsOverlay = document.createElement('div')
+      toolsOverlay.className = 'dls-tools-overlay'
+      toolsOverlay.innerHTML =
+        '<div class="dls-tools-head"><strong>Tools</strong><button class="dls-tools-close" aria-label="Close">×</button></div>' +
+        '<div class="dls-tools-tabs"><button class="dls-tools-tab" data-tab="skills">Skills</button><button class="dls-tools-tab" data-tab="mcp">MCP Servers</button></div>' +
+        '<div class="dls-tools-body"></div>'
+      el.panel.appendChild(toolsOverlay)
+      toolsOverlay.querySelector('.dls-tools-close')!.addEventListener('click', () => {
+        if (toolsOverlay) toolsOverlay.hidden = true
+      })
+      toolsOverlay.querySelectorAll<HTMLElement>('.dls-tools-tab').forEach((t) =>
+        t.addEventListener('click', () => {
+          toolsTab = (t.dataset.tab as 'skills' | 'mcp') ?? 'skills'
+          renderToolsTabs()
+        }),
+      )
+    }
+    toolsOverlay.hidden = false
+    renderToolsTabs()
+  }
+
+  function renderToolsTabs(): void {
+    if (!toolsOverlay) return
+    toolsOverlay.querySelectorAll<HTMLElement>('.dls-tools-tab').forEach((t) =>
+      t.classList.toggle('is-active', t.dataset.tab === toolsTab),
+    )
+    const body = toolsOverlay.querySelector('.dls-tools-body') as HTMLElement
+    body.textContent = 'Loading…'
+    if (toolsTab === 'skills') void renderSkillsTab(body)
+    else void renderMcpTab(body)
+  }
+
+  function toolsSection(title: string): HTMLElement {
+    const h = document.createElement('div')
+    h.className = 'dls-tools-section'
+    h.textContent = title
+    return h
+  }
+  function toolsRow(label: string, sub: string): HTMLElement {
+    const row = document.createElement('div')
+    row.className = 'dls-tools-row'
+    const main = document.createElement('div')
+    main.className = 'dls-tools-row-main'
+    const name = document.createElement('div')
+    name.className = 'dls-tools-row-name'
+    name.textContent = label
+    const meta = document.createElement('div')
+    meta.className = 'dls-tools-row-sub'
+    meta.textContent = sub
+    main.append(name, meta)
+    row.appendChild(main)
+    return row
+  }
+
+  async function renderSkillsTab(body: HTMLElement): Promise<void> {
+    const [catalog, instances] = await Promise.all([
+      divinciApi('GET', '/api/v1/skills/catalog'),
+      divinciApi('GET', '/api/v1/skills'),
+    ])
+    body.replaceChildren()
+    if (catalog?.noKey) { body.appendChild(noKeyNotice()); return }
+    const cat = Array.isArray(catalog?.data) ? (catalog!.data as Array<Record<string, unknown>>) : []
+    const inst = Array.isArray(instances?.data) ? (instances!.data as Array<Record<string, unknown>>) : []
+
+    body.appendChild(toolsSection('Enabled'))
+    if (inst.length === 0) {
+      const e = document.createElement('p'); e.className = 'dls-tools-empty'; e.textContent = 'No skills enabled yet.'
+      body.appendChild(e)
+    }
+    for (const s of inst) {
+      const row = toolsRow(String(s.title ?? s.integrationId), `${s.integrationId} · ${s.connection}`)
+      const rm = document.createElement('button')
+      rm.className = 'dls-tools-btn-sm'; rm.textContent = 'Remove'
+      rm.addEventListener('click', async () => {
+        rm.disabled = true
+        await divinciApi('DELETE', `/api/v1/skills/${encodeURIComponent(String(s.id))}`)
+        renderToolsTabs()
+      })
+      row.appendChild(rm)
+      body.appendChild(row)
+    }
+
+    body.appendChild(toolsSection('Available'))
+    for (const c of cat) {
+      const row = toolsRow(String(c.label ?? c.id), String(c.description ?? ''))
+      const en = document.createElement('button')
+      en.className = 'dls-tools-btn-sm dls-primary'; en.textContent = 'Enable'
+      en.addEventListener('click', async () => {
+        en.disabled = true
+        await divinciApi('POST', '/api/v1/skills', { integrationId: c.id, title: String(c.label ?? c.id) })
+        renderToolsTabs()
+      })
+      row.appendChild(en)
+      body.appendChild(row)
+    }
+  }
+
+  async function renderMcpTab(body: HTMLElement): Promise<void> {
+    const resp = await divinciApi('GET', '/api/v1/mcp-servers')
+    body.replaceChildren()
+    if (resp?.noKey) { body.appendChild(noKeyNotice()); return }
+    const servers = Array.isArray(resp?.data) ? (resp!.data as Array<Record<string, unknown>>) : []
+
+    body.appendChild(toolsSection('Your MCP servers'))
+    if (servers.length === 0) {
+      const e = document.createElement('p'); e.className = 'dls-tools-empty'; e.textContent = 'No MCP servers added yet.'
+      body.appendChild(e)
+    }
+    for (const s of servers) {
+      const row = toolsRow(String(s.name), `${s.transport} · ${s.url}${s.hasAuth ? ' · 🔒' : ''}`)
+      const rm = document.createElement('button')
+      rm.className = 'dls-tools-btn-sm'; rm.textContent = 'Remove'
+      rm.addEventListener('click', async () => {
+        rm.disabled = true
+        await divinciApi('DELETE', `/api/v1/mcp-servers/${encodeURIComponent(String(s.id))}`)
+        renderToolsTabs()
+      })
+      row.appendChild(rm)
+      body.appendChild(row)
+    }
+
+    // Add form
+    body.appendChild(toolsSection('Add a server'))
+    const form = document.createElement('div')
+    form.className = 'dls-tools-form'
+    const nameI = document.createElement('input'); nameI.placeholder = 'Name'; nameI.className = 'dls-tools-input'
+    const urlI = document.createElement('input'); urlI.placeholder = 'https://… or wss://…'; urlI.className = 'dls-tools-input'
+    const transSel = document.createElement('select'); transSel.className = 'dls-tools-input'
+    for (const t of ['http', 'sse', 'websocket']) { const o = document.createElement('option'); o.value = t; o.textContent = t; transSel.appendChild(o) }
+    const add = document.createElement('button'); add.className = 'dls-tools-btn-sm dls-primary'; add.textContent = 'Add MCP server'
+    const err = document.createElement('div'); err.className = 'dls-tools-err'
+    add.addEventListener('click', async () => {
+      err.textContent = ''
+      if (!nameI.value.trim() || !urlI.value.trim()) { err.textContent = 'Name and URL are required.'; return }
+      add.disabled = true
+      const r = await divinciApi('POST', '/api/v1/mcp-servers', {
+        name: nameI.value.trim(), url: urlI.value.trim(), transport: transSel.value,
+      })
+      add.disabled = false
+      if (r?.ok) renderToolsTabs()
+      else err.textContent = `Failed${r?.status ? ` (${r.status})` : ''}.`
+    })
+    form.append(nameI, urlI, transSel, add, err)
+    body.appendChild(form)
+  }
+
   // Per-message hover quick-menu: Copy + Speak (TTS via the browser's
   // speechSynthesis — local, no account). Reads the bubble's text live at click
   // time so it works for streamed/markdown bubbles too.
@@ -1585,6 +1762,11 @@ function mountSidebar(
     setExpanded(!root.classList.contains('dls-expanded'))
     toggleMenu(false)
   })
+  // Tools panel (Skills + MCP servers).
+  el.toolsBtn.addEventListener('click', () => {
+    toggleMenu(false)
+    openToolsPanel()
+  })
   // Global-chat toggle: flip + keep the menu open so the label change is visible.
   el.globalToggle.addEventListener('click', () => void setGlobalChatMode(!globalChatMode))
   el.shareMd.addEventListener('click', () => {
@@ -1793,6 +1975,11 @@ const TEMPLATE = /* html */ `
             </svg>
           </button>
           <div class="dls-menu" hidden role="menu">
+            <button class="dls-menu-item dls-tools-btn" type="button" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17v3h3l5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z"/></svg>
+              <span class="dls-menu-label">Tools (Skills &amp; MCP)</span>
+            </button>
+            <div class="dls-menu-sep"></div>
             <button class="dls-menu-item dls-global-toggle" type="button" role="menuitem" data-state="tab" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/></svg>
               <span class="dls-menu-label">Global chat</span>
@@ -2094,6 +2281,63 @@ const SIDEBAR_CSS = /* css */ `
   .dls-menu-item:disabled { color: var(--dls-muted); cursor: default; }
   .dls-menu-item.dls-global-toggle[data-state="global"] svg { color: var(--dls-accent); }
   .dls-menu-sep { height: 1px; background: var(--dls-border); margin: 4px 2px; }
+
+  /* Tools panel overlay (Skills | MCP servers) — covers the panel. */
+  .dls-tools-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    background: var(--dls-bg);
+    display: flex;
+    flex-direction: column;
+  }
+  .dls-tools-overlay[hidden] { display: none; }
+  .dls-tools-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--dls-border);
+    font-size: 15px;
+  }
+  .dls-tools-close {
+    background: transparent; border: none; color: var(--dls-muted);
+    font-size: 22px; line-height: 1; cursor: pointer; padding: 0 4px;
+  }
+  .dls-tools-close:hover { color: var(--dls-text); }
+  .dls-tools-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--dls-border); }
+  .dls-tools-tab {
+    flex: 1; font-family: inherit; font-size: 13px; padding: 7px 10px;
+    background: transparent; border: 1px solid var(--dls-border); border-radius: 8px;
+    color: var(--dls-muted); cursor: pointer;
+  }
+  .dls-tools-tab.is-active { color: #fff; background: var(--dls-accent); border-color: var(--dls-accent); }
+  .dls-tools-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
+  .dls-tools-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dls-muted); margin: 12px 0 6px; }
+  .dls-tools-section:first-child { margin-top: 0; }
+  .dls-tools-empty { color: var(--dls-muted); font-size: 13px; margin: 4px 0; }
+  .dls-tools-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid var(--dls-border);
+  }
+  .dls-tools-row-main { flex: 1; min-width: 0; }
+  .dls-tools-row-name { font-size: 13px; color: var(--dls-text); }
+  .dls-tools-row-sub { font-size: 11px; color: var(--dls-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dls-tools-btn-sm {
+    flex-shrink: 0; font-family: inherit; font-size: 12px; padding: 5px 10px;
+    background: var(--dls-bg-2); border: 1px solid var(--dls-border); border-radius: 6px;
+    color: var(--dls-text); cursor: pointer;
+  }
+  .dls-tools-btn-sm:hover:not(:disabled) { border-color: var(--dls-accent); }
+  .dls-tools-btn-sm.dls-primary { background: var(--dls-accent); color: #fff; border-color: var(--dls-accent); }
+  .dls-tools-btn-sm:disabled { opacity: 0.5; cursor: default; }
+  .dls-tools-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+  .dls-tools-input {
+    font-family: inherit; font-size: 13px; padding: 7px 9px;
+    background: var(--dls-bg-2); border: 1px solid var(--dls-border); border-radius: 6px; color: var(--dls-text);
+  }
+  .dls-tools-input:focus { outline: none; border-color: var(--dls-accent); }
+  .dls-tools-err { color: #ff9b9b; font-size: 12px; }
 
   /* Body splits into the conversation rail (expanded only) + the main column. */
   .dls-body { display: flex; flex: 1; min-height: 0; }

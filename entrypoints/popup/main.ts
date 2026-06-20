@@ -49,6 +49,7 @@ const els = {
   cfApiTokenInput: document.getElementById('setting-cf-api-token') as HTMLInputElement,
   braveApiKeyInput: document.getElementById('setting-brave-api-key') as HTMLInputElement,
   serperApiKeyInput: document.getElementById('setting-serper-api-key') as HTMLInputElement,
+  divinciApiKeyInput: document.getElementById('setting-divinci-api-key') as HTMLInputElement,
   useAccountToggle: document.getElementById('setting-use-divinci-account') as HTMLInputElement,
   useAccountRow: document.querySelector<HTMLElement>('.setting-row-checkbox')!,
   workspaceIdInput: document.getElementById('setting-divinci-workspace-id') as HTMLInputElement,
@@ -312,22 +313,24 @@ function sendToolApiCredentials(): void {
     cfApiToken: els.cfApiTokenInput.value || undefined,
     braveApiKey: els.braveApiKeyInput.value || undefined,
     serperApiKey: els.serperApiKeyInput.value || undefined,
+    divinciApiKey: els.divinciApiKeyInput.value || undefined,
   })
 }
 
 async function loadToolApiCredentials(): Promise<void> {
   const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
   const settings = stored[STORAGE_KEY_SETTINGS] as
-    | { cfAccountId?: string; cfApiToken?: string; braveApiKey?: string; serperApiKey?: string }
+    | { cfAccountId?: string; cfApiToken?: string; braveApiKey?: string; serperApiKey?: string; divinciApiKey?: string }
     | undefined
   els.cfAccountIdInput.value = settings?.cfAccountId ?? ''
   els.cfApiTokenInput.value = settings?.cfApiToken ?? ''
   els.braveApiKeyInput.value = settings?.braveApiKey ?? ''
   els.serperApiKeyInput.value = settings?.serperApiKey ?? ''
+  els.divinciApiKeyInput.value = settings?.divinciApiKey ?? ''
   updateUseAccountRowVisibility()
 }
 
-for (const input of [els.cfAccountIdInput, els.cfApiTokenInput, els.braveApiKeyInput, els.serperApiKeyInput]) {
+for (const input of [els.cfAccountIdInput, els.cfApiTokenInput, els.braveApiKeyInput, els.serperApiKeyInput, els.divinciApiKeyInput]) {
   input.addEventListener('input', () => {
     void sendToolApiCredentials()
     updateUseAccountRowVisibility()

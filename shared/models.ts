@@ -103,6 +103,13 @@ export interface UserSettings {
   /** Workspace (whitelabel) id the account-mode chat targets. */
   divinciWorkspaceId?: string
   /**
+   * Workspace API key (release:read/write) for the Tools panel — lets the
+   * extension manage Skills + MCP servers via the /api/v1 surface (which is
+   * API-key, not OAuth). Stored in chrome.storage; sent as X-API-Key by the SW
+   * proxy. Separate from the OAuth account tokens.
+   */
+  divinciApiKey?: string
+  /**
    * Optional release id to pin. The release's toolRouting.enabled gates
    * whether the server runs the Kimi web-search loop for this request.
    */
