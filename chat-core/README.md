@@ -57,5 +57,8 @@ Gaps that don't fit the SDK cleanly stay custom (e.g. the offscreen
 5. `AccountInference` — SDK-backed (`@divinci-ai/server`, fill gap #1 first); fold
    in the current account-mode branch from `finalize-chat.ts`. The controller
    swaps backends via `setInference`.
-6. `LocalTranscriptStore` (IndexedDB) + `AccountTranscriptStore` (SDK, after
-   gap #2) → unblocks §1 page-wide chat.
+6. ✅ `LocalTranscriptStore` (IndexedDB, `local-transcript-store.ts` +
+   `idb-conversation-backend.ts`) — wired into the sidebar's full-screen
+   expand + conversation rail (local persistence: new/switch/rename/delete,
+   restore-on-open). `AccountTranscriptStore` (SDK, after gap #2) will mirror it
+   so signed-in chats save to the account + local chats import on sign-in.
