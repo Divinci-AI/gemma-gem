@@ -311,6 +311,27 @@ header h1 {
   font-style: normal;
 }
 
+.setting-row-checkbox {
+  align-items: center;
+}
+.setting-row-checkbox input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.account-action {
+  width: 100%;
+  border: 1px solid #4f7df0;
+  background: #4f7df0;
+  color: #fff;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.account-action:hover { background: #3f6ad8; }
+.account-action:disabled { opacity: 0.6; cursor: default; }
+
 .model-action,
 .unload-action {
   border: 1px solid #4f7df0;

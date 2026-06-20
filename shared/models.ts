@@ -79,6 +79,21 @@ export interface UserSettings {
    * Either braveApiKey or serperApiKey must be set for web search to work.
    */
   serperApiKey?: string
+  /**
+   * Account mode: when true, tool-calling is proxied through the user's
+   * signed-in Divinci account (stage.divinci.app) using SERVER-held keys,
+   * instead of the local Cloudflare/Brave/Serper path above. The OAuth tokens
+   * live separately in chrome.storage (STORAGE_KEY_DIVINCI_AUTH), SW-owned —
+   * they are NOT part of UserSettings and never reach the offscreen doc.
+   */
+  useDivinciAccount?: boolean
+  /** Workspace (whitelabel) id the account-mode chat targets. */
+  divinciWorkspaceId?: string
+  /**
+   * Optional release id to pin. The release's toolRouting.enabled gates
+   * whether the server runs the Kimi web-search loop for this request.
+   */
+  divinciReleaseId?: string
 }
 
 /**

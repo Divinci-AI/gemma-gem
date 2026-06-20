@@ -278,6 +278,55 @@ export interface InternalSetSettingsRequest {
   cfApiToken?: string
   braveApiKey?: string
   serperApiKey?: string
+  /** Account-mode fields (Divinci OAuth proxy). Tokens are NOT here — SW-owned. */
+  useDivinciAccount?: boolean
+  divinciWorkspaceId?: string
+  divinciReleaseId?: string
+}
+
+// ---- Divinci account (Auth0 PKCE) protocol: popup/offscreen ↔ background SW ----
+
+/** Popup → SW: begin an interactive Auth0 PKCE sign-in. */
+export interface InternalDivinciSignInRequest {
+  type: 'internal:divinci-signin'
+}
+
+/** Popup → SW: clear stored Divinci OAuth tokens. */
+export interface InternalDivinciSignOutRequest {
+  type: 'internal:divinci-signout'
+}
+
+/** Popup → SW: query current sign-in state. */
+export interface InternalDivinciAuthStatusRequest {
+  type: 'internal:divinci-auth-status'
+}
+
+/** SW → popup: sign-in state + (on success) the account email. */
+export interface InternalDivinciAuthStatusResponse {
+  type: 'internal:divinci-auth-status-response'
+  signedIn: boolean
+  email?: string
+  error?: string
+}
+
+/**
+ * Offscreen → SW: run a chat completion through the signed-in Divinci account.
+ * The SW owns the access token (refresh-on-401) and performs the authenticated
+ * fetch, so the token never reaches the offscreen document.
+ */
+export interface InternalAccountChatRequest {
+  type: 'internal:account-chat'
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  workspaceId: string
+  releaseId?: string
+}
+
+/** SW → offscreen: the account-mode completion result. */
+export interface InternalAccountChatResponse {
+  type: 'internal:account-chat-response'
+  ok: boolean
+  text?: string
+  error?: string
 }
 
 /**
@@ -330,6 +379,10 @@ export type InternalRequest =
   | InternalClearCacheRequest
   | InternalSetSettingsRequest
   | InternalPageCheckRequest
+  | InternalDivinciSignInRequest
+  | InternalDivinciSignOutRequest
+  | InternalDivinciAuthStatusRequest
+  | InternalAccountChatRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */
 export interface InternalEvent {

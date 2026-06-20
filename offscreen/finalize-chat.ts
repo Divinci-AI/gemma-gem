@@ -66,6 +66,12 @@ export interface FinalizeDeps {
   registerAbort?: (controller: AbortController) => void
   /** Injectable for tests; defaults to the real Kimi loop. */
   runKimi?: typeof runKimiLoop
+  /**
+   * Whether a routing executor is available. When omitted, falls back to the
+   * local-CF gate (cfAccountId + cfApiToken present). Account mode passes
+   * `true` explicitly — its executor is the server proxy, not local CF creds.
+   */
+  routingEnabled?: boolean
 }
 
 /**
@@ -88,13 +94,15 @@ export async function finalizeChatResult(deps: FinalizeDeps): Promise<FinalizeRe
     args: tc.args ?? {},
   }))
   const hasToolCalls = toolCalls.length > 0
-  const cfConfigured = Boolean(settings.cfAccountId && settings.cfApiToken)
+  // Account mode supplies routingEnabled=true (executor is the server proxy);
+  // otherwise gate on local CF creds being present.
+  const canRoute = deps.routingEnabled ?? Boolean(settings.cfAccountId && settings.cfApiToken)
 
   let fullText = gemma.fullText
   let durationMs = gemma.durationMs
   let routedByKimi = false
 
-  if (hasToolCalls && cfConfigured) {
+  if (hasToolCalls && canRoute) {
     onToolStatus({ status: 'routing', calls: toolStatusCalls })
 
     const kimiAbort = new AbortController()

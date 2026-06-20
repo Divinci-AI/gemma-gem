@@ -1,0 +1,248 @@
+/**
+ * Divinci account auth bridge (service worker).
+ *
+ * Owns the Auth0 PKCE flow and the OAuth token bundle. The service worker is
+ * the only context with chrome.identity + chrome.storage, so it:
+ *   - runs interactive sign-in (popup → internal:divinci-signin)
+ *   - persists tokens in chrome.storage.local (never broadcast to offscreen)
+ *   - silently refreshes the access token on expiry / 401
+ *   - performs the account-mode chat fetch on the offscreen's behalf
+ *     (offscreen → internal:account-chat), so the token never leaves the SW.
+ *
+ * Pure URL/body/token shaping lives in shared/divinci-account.ts; PKCE crypto
+ * in shared/pkce.ts.
+ */
+
+import { log } from '@/shared/logger'
+import {
+  DivinciAuthTokens,
+  STORAGE_KEY_DIVINCI_AUTH,
+  buildAuthorizeUrl,
+  tokenEndpoint,
+  buildCodeExchangeBody,
+  buildRefreshBody,
+  parseTokenResponse,
+  isAccessTokenExpired,
+  buildChatCompletionsUrl,
+  buildChatCompletionsBody,
+  parseChatCompletion,
+} from '@/shared/divinci-account'
+import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
+import type {
+  Message,
+  InternalDivinciAuthStatusResponse,
+  InternalAccountChatRequest,
+  InternalAccountChatResponse,
+} from '@/shared/messages'
+
+// ---- token storage ----
+
+async function getStoredTokens(): Promise<DivinciAuthTokens | null> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_DIVINCI_AUTH)
+  return (stored[STORAGE_KEY_DIVINCI_AUTH] as DivinciAuthTokens | undefined) ?? null
+}
+
+async function setStoredTokens(tokens: DivinciAuthTokens): Promise<void> {
+  await chrome.storage.local.set({ [STORAGE_KEY_DIVINCI_AUTH]: tokens })
+}
+
+async function clearStoredTokens(): Promise<void> {
+  await chrome.storage.local.remove(STORAGE_KEY_DIVINCI_AUTH)
+}
+
+// ---- token endpoint POST ----
+
+async function postToken(body: string): Promise<DivinciAuthTokens> {
+  const res = await fetch(tokenEndpoint(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  })
+  // Safe parse: token endpoint can return non-JSON on proxy/error.
+  const text = await res.text()
+  if (!res.ok) {
+    throw new Error(`token endpoint ${res.status}: ${text.substring(0, 200)}`)
+  }
+  let raw: Record<string, unknown>
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    throw new Error(`token endpoint returned non-JSON: ${text.substring(0, 120)}`)
+  }
+  return parseTokenResponse(raw, Date.now())
+}
+
+// ---- interactive sign-in ----
+
+export async function signIn(): Promise<{ signedIn: boolean; email?: string; error?: string }> {
+  try {
+    const redirectUri = chrome.identity.getRedirectURL()
+    const codeVerifier = generateCodeVerifier()
+    const state = generateState()
+    const codeChallenge = await computeCodeChallenge(codeVerifier)
+    const authUrl = buildAuthorizeUrl({ redirectUri, codeChallenge, state })
+
+    const redirectResponse = await chrome.identity.launchWebAuthFlow({
+      url: authUrl,
+      interactive: true,
+    })
+    if (!redirectResponse) throw new Error('sign-in was cancelled')
+
+    const url = new URL(redirectResponse)
+    const returnedError = url.searchParams.get('error')
+    if (returnedError) {
+      throw new Error(`${returnedError}: ${url.searchParams.get('error_description') ?? ''}`)
+    }
+    if (url.searchParams.get('state') !== state) {
+      throw new Error('state mismatch — possible CSRF, aborting')
+    }
+    const code = url.searchParams.get('code')
+    if (!code) throw new Error('no authorization code in callback')
+
+    const tokens = await postToken(buildCodeExchangeBody({ code, codeVerifier, redirectUri }))
+    await setStoredTokens(tokens)
+    log.info('[divinci-auth] signed in', { hasRefresh: Boolean(tokens.refreshToken) })
+    return { signedIn: true, email: tokens.email }
+  } catch (err) {
+    log.error('[divinci-auth] sign-in failed:', err)
+    return { signedIn: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
+export async function signOut(): Promise<void> {
+  await clearStoredTokens()
+  log.info('[divinci-auth] signed out')
+}
+
+export async function getAuthStatus(): Promise<{ signedIn: boolean; email?: string }> {
+  const tokens = await getStoredTokens()
+  if (!tokens) return { signedIn: false }
+  return { signedIn: true, email: tokens.email }
+}
+
+/**
+ * Return a non-expired access token, refreshing via the refresh token when
+ * needed. Returns null when not signed in or the refresh failed (caller should
+ * prompt re-sign-in).
+ */
+async function getValidAccessToken(): Promise<string | null> {
+  const tokens = await getStoredTokens()
+  if (!tokens) return null
+  if (!isAccessTokenExpired(tokens, Date.now())) return tokens.accessToken
+  if (!tokens.refreshToken) return null
+  try {
+    const refreshed = await postToken(buildRefreshBody(tokens.refreshToken))
+    // Carry the prior refresh token forward if the response omitted one.
+    if (!refreshed.refreshToken) refreshed.refreshToken = tokens.refreshToken
+    await setStoredTokens(refreshed)
+    return refreshed.accessToken
+  } catch (err) {
+    log.error('[divinci-auth] token refresh failed:', err)
+    return null
+  }
+}
+
+// ---- account-mode chat fetch (on the offscreen's behalf) ----
+
+async function accountChat(req: InternalAccountChatRequest): Promise<InternalAccountChatResponse> {
+  try {
+    let token = await getValidAccessToken()
+    if (!token) return { type: 'internal:account-chat-response', ok: false, error: 'not signed in' }
+
+    const url = buildChatCompletionsUrl(req.workspaceId)
+    const body = buildChatCompletionsBody({ messages: req.messages, releaseId: req.releaseId })
+
+    let res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body,
+    })
+
+    // One refresh-and-retry on 401 (token rotated/expired between checks).
+    if (res.status === 401) {
+      await clearTokenExpiry()
+      token = await getValidAccessToken()
+      if (token) {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body,
+        })
+      }
+    }
+
+    const text = await res.text()
+    if (!res.ok) {
+      return {
+        type: 'internal:account-chat-response',
+        ok: false,
+        error: `server ${res.status}: ${text.substring(0, 200)}`,
+      }
+    }
+    let raw: unknown
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      return {
+        type: 'internal:account-chat-response',
+        ok: false,
+        error: `non-JSON response (${res.status}): ${text.substring(0, 120)}`,
+      }
+    }
+    return { type: 'internal:account-chat-response', ok: true, text: parseChatCompletion(raw) }
+  } catch (err) {
+    return { type: 'internal:account-chat-response', ok: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
+/** Force the next getValidAccessToken() to refresh (used after a 401). */
+async function clearTokenExpiry(): Promise<void> {
+  const tokens = await getStoredTokens()
+  if (tokens) await setStoredTokens({ ...tokens, expiresAt: 0 })
+}
+
+// ---- message bridge ----
+
+export function setupDivinciAuthBridge(): void {
+  chrome.runtime.onMessage.addListener(
+    (msg: Message, _sender, sendResponse: (r?: unknown) => void) => {
+      switch (msg?.type) {
+        case 'internal:divinci-signin':
+          void signIn().then((r) => {
+            const resp: InternalDivinciAuthStatusResponse = {
+              type: 'internal:divinci-auth-status-response',
+              signedIn: r.signedIn,
+              email: r.email,
+              error: r.error,
+            }
+            sendResponse(resp)
+          })
+          return true
+        case 'internal:divinci-signout':
+          void signOut().then(() => {
+            const resp: InternalDivinciAuthStatusResponse = {
+              type: 'internal:divinci-auth-status-response',
+              signedIn: false,
+            }
+            sendResponse(resp)
+          })
+          return true
+        case 'internal:divinci-auth-status':
+          void getAuthStatus().then((s) => {
+            const resp: InternalDivinciAuthStatusResponse = {
+              type: 'internal:divinci-auth-status-response',
+              signedIn: s.signedIn,
+              email: s.email,
+            }
+            sendResponse(resp)
+          })
+          return true
+        case 'internal:account-chat':
+          void accountChat(msg).then((r) => sendResponse(r))
+          return true
+        default:
+          return undefined
+      }
+    },
+  )
+}

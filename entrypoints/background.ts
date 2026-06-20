@@ -19,6 +19,7 @@ import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
 import { setupDivinciAPIBridge } from '@/background/divinci-api-bridge'
+import { setupDivinciAuthBridge } from '@/background/divinci-auth'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -76,6 +77,11 @@ function setupSettingsPersistence(): void {
         cfApiToken: m.cfApiToken ?? prev.cfApiToken,
         braveApiKey: m.braveApiKey ?? prev.braveApiKey,
         serperApiKey: m.serperApiKey ?? prev.serperApiKey,
+        // ?? keeps a false from overwriting nothing; the popup always sends an
+        // explicit boolean for the toggle, so a real `false` still persists.
+        useDivinciAccount: m.useDivinciAccount ?? prev.useDivinciAccount,
+        divinciWorkspaceId: m.divinciWorkspaceId ?? prev.divinciWorkspaceId,
+        divinciReleaseId: m.divinciReleaseId ?? prev.divinciReleaseId,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -100,6 +106,9 @@ async function hydrateOffscreenSettings(): Promise<void> {
       cfApiToken: saved.cfApiToken,
       braveApiKey: saved.braveApiKey,
       serperApiKey: saved.serperApiKey,
+      useDivinciAccount: saved.useDivinciAccount,
+      divinciWorkspaceId: saved.divinciWorkspaceId,
+      divinciReleaseId: saved.divinciReleaseId,
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {
       log.warn('Settings hydrate sendMessage failed:', e)
@@ -114,6 +123,7 @@ export default defineBackground(() => {
   setupExternalBridge()
   setupInternalBridge()
   setupDivinciAPIBridge()
+  setupDivinciAuthBridge()
   setupSettingsPersistence()
 
   ensureOffscreenDocument()

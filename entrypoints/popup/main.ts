@@ -14,6 +14,7 @@
 import type {
   InternalRequest,
   InternalStatusResponse,
+  InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
 import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_API_KEY, STORAGE_KEY_WHITELABEL_ID, type ModelId } from '@/shared/models'
 
@@ -45,6 +46,11 @@ const els = {
   cfApiTokenInput: document.getElementById('setting-cf-api-token') as HTMLInputElement,
   braveApiKeyInput: document.getElementById('setting-brave-api-key') as HTMLInputElement,
   serperApiKeyInput: document.getElementById('setting-serper-api-key') as HTMLInputElement,
+  useAccountToggle: document.getElementById('setting-use-divinci-account') as HTMLInputElement,
+  signinBtn: document.getElementById('divinci-signin-btn') as HTMLButtonElement,
+  authStatus: document.getElementById('divinci-auth-status')!,
+  workspaceIdInput: document.getElementById('setting-divinci-workspace-id') as HTMLInputElement,
+  releaseIdInput: document.getElementById('setting-divinci-release-id') as HTMLInputElement,
 }
 
 // Track which inputs the user has touched so we don't fight their typing
@@ -329,6 +335,63 @@ for (const input of [els.cfAccountIdInput, els.cfApiTokenInput, els.braveApiKeyI
   input.addEventListener('input', () => { void sendToolApiCredentials() })
 }
 
+// ---- Divinci account (OAuth) -------------------------------------------
+function sendAccountSettings(): void {
+  void sendInternal({
+    type: 'internal:set-settings',
+    useDivinciAccount: els.useAccountToggle.checked,
+    divinciWorkspaceId: els.workspaceIdInput.value.trim() || undefined,
+    divinciReleaseId: els.releaseIdInput.value.trim() || undefined,
+  })
+}
+
+async function loadAccountSettings(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+  const s = stored[STORAGE_KEY_SETTINGS] as
+    | { useDivinciAccount?: boolean; divinciWorkspaceId?: string; divinciReleaseId?: string }
+    | undefined
+  els.useAccountToggle.checked = Boolean(s?.useDivinciAccount)
+  els.workspaceIdInput.value = s?.divinciWorkspaceId ?? ''
+  els.releaseIdInput.value = s?.divinciReleaseId ?? ''
+}
+
+function renderAuthStatus(resp: InternalDivinciAuthStatusResponse | null): void {
+  const signedIn = Boolean(resp?.signedIn)
+  els.signinBtn.textContent = signedIn ? 'Sign out' : 'Sign in with Divinci'
+  if (resp?.error) {
+    els.authStatus.textContent = `Sign-in failed: ${resp.error}`
+  } else if (signedIn) {
+    els.authStatus.textContent = resp?.email ? `Signed in as ${resp.email}.` : 'Signed in.'
+  } else {
+    els.authStatus.textContent = 'Not signed in.'
+  }
+}
+
+async function refreshAuthStatus(): Promise<void> {
+  const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
+    type: 'internal:divinci-auth-status',
+  })
+  renderAuthStatus(resp)
+}
+
+els.signinBtn.addEventListener('click', async () => {
+  const status = await sendInternal<InternalDivinciAuthStatusResponse>({
+    type: 'internal:divinci-auth-status',
+  })
+  const signedIn = Boolean(status?.signedIn)
+  els.signinBtn.disabled = true
+  els.authStatus.textContent = signedIn ? 'Signing out…' : 'Opening Divinci sign-in…'
+  const resp = await sendInternal<InternalDivinciAuthStatusResponse>({
+    type: signedIn ? 'internal:divinci-signout' : 'internal:divinci-signin',
+  })
+  els.signinBtn.disabled = false
+  renderAuthStatus(resp)
+})
+
+els.useAccountToggle.addEventListener('change', () => { sendAccountSettings() })
+els.workspaceIdInput.addEventListener('input', () => { sendAccountSettings() })
+els.releaseIdInput.addEventListener('input', () => { sendAccountSettings() })
+
 // Render version from manifest
 const manifest = chrome.runtime.getManifest()
 els.version.textContent = `v${manifest.version}`
@@ -383,6 +446,8 @@ void poll()
 void refreshStorageEstimate()
 void loadRagConfig()
 void loadToolApiCredentials()
+void loadAccountSettings()
+void refreshAuthStatus()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are
 // actually downloaded/evicted, both of which are infrequent compared to

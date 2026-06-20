@@ -48,6 +48,10 @@ const API_HOSTS = [
   'https://api.divinci.app',
   'https://api.stage.divinci.app',
   'https://api.dev.divinci.app',
+  // Auth0 staging tenant — the SW fetches /oauth/token here during the PKCE
+  // sign-in + refresh. (The /authorize redirect is handled by
+  // chrome.identity.launchWebAuthFlow and needs no host permission.)
+  'https://divinci-staging.us.auth0.com',
   ...(mode === 'development' ? ['http://localhost:9080'] : []),
 ]
 
@@ -57,7 +61,7 @@ export default defineConfig({
     description:
       'In-browser Gemma 4 inference via WebGPU for chat.divinci.app — model loads once, stays cached, shared across tabs.',
     key: MANIFEST_PUBLIC_KEY,
-    permissions: ['offscreen', 'storage'],
+    permissions: ['offscreen', 'storage', 'identity'],
     host_permissions: API_HOSTS.map((h) => `${h}/*`),
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.

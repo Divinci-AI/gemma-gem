@@ -175,3 +175,42 @@ describe('finalizeChatResult — routed through Kimi', () => {
     expect(r).toEqual({ aborted: true })
   })
 })
+
+describe('finalizeChatResult — account mode (routingEnabled, no local CF creds)', () => {
+  it('routes through the injected (server-proxy) executor even with empty settings', async () => {
+    const runKimi = vi
+      .fn()
+      .mockResolvedValue({ response: 'server-proxied answer', iterations: 1, durationMs: 120 })
+    const r = await finalizeChatResult(
+      baseDeps({
+        toolCalls: [TOOL_CALL],
+        settings: {}, // NO cfAccountId/cfApiToken — the local gate would block
+        routingEnabled: true, // account mode opens the gate
+        runKimi,
+        gemma: { fullText: 'raw <|tool_call>x<tool_call|>', tokensGenerated: 4, durationMs: 90 },
+      }),
+    )
+    expect(runKimi).toHaveBeenCalledTimes(1)
+    expect(r.aborted).toBe(false)
+    if (r.aborted) return
+    expect(r.fullText).toBe('server-proxied answer')
+    expect(r.durationMs).toBe(90 + 120)
+  })
+
+  it('does NOT route when routingEnabled is false and no CF creds (envelopes stripped)', async () => {
+    const runKimi = vi.fn()
+    const r = await finalizeChatResult(
+      baseDeps({
+        toolCalls: [TOOL_CALL],
+        settings: {},
+        routingEnabled: false,
+        runKimi,
+        gemma: { fullText: 'plain <|tool_call>x<tool_call|>', tokensGenerated: 2, durationMs: 30 },
+      }),
+    )
+    expect(runKimi).not.toHaveBeenCalled()
+    expect(r.aborted).toBe(false)
+    if (r.aborted) return
+    expect(r.fullText).toBe('plain')
+  })
+})

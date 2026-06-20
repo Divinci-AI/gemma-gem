@@ -14,7 +14,11 @@ import { type UserSettings } from '@/shared/models'
  * UserSettings — does not mutate `current`.
  */
 export function clampSettings(
-  input: { temperature?: unknown; maxNewTokens?: unknown; cfAccountId?: unknown; cfApiToken?: unknown; braveApiKey?: unknown; serperApiKey?: unknown },
+  input: {
+    temperature?: unknown; maxNewTokens?: unknown;
+    cfAccountId?: unknown; cfApiToken?: unknown; braveApiKey?: unknown; serperApiKey?: unknown;
+    useDivinciAccount?: unknown; divinciWorkspaceId?: unknown; divinciReleaseId?: unknown;
+  },
   current: UserSettings
 ): UserSettings {
   const next: UserSettings = { ...current }
@@ -35,6 +39,15 @@ export function clampSettings(
   }
   if (typeof input.serperApiKey === 'string') {
     next.serperApiKey = input.serperApiKey
+  }
+  if (typeof input.useDivinciAccount === 'boolean') {
+    next.useDivinciAccount = input.useDivinciAccount
+  }
+  if (typeof input.divinciWorkspaceId === 'string') {
+    next.divinciWorkspaceId = input.divinciWorkspaceId
+  }
+  if (typeof input.divinciReleaseId === 'string') {
+    next.divinciReleaseId = input.divinciReleaseId
   }
   return next
 }

@@ -19,6 +19,7 @@ import {
 import { clampSettings } from '@/offscreen/settings-helpers'
 import { parseToolCalls } from '@/offscreen/tool-call-parser'
 import { finalizeChatResult } from '@/offscreen/finalize-chat'
+import { makeAccountChatRunner } from '@/offscreen/account-chat-client'
 import { log } from '@/shared/logger'
 import type {
   Message,
@@ -236,6 +237,15 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
       // chrome/ChatHost stack. Here we just supply the chrome-side deps: the
       // live abort flag, the tool-status emitter, and the abort registration
       // (so handleAbort can cancel an in-flight Kimi loop).
+      //
+      // Account mode: when the user has signed into their Divinci account and
+      // set a workspace, route tool-calls through the server proxy (server-held
+      // keys) instead of the local Cloudflare/Kimi loop. The executor is the
+      // SW-backed account runner; routingEnabled=true since the gate is "signed
+      // in + workspace set", not local CF creds.
+      const accountMode = Boolean(
+        userSettings.useDivinciAccount && userSettings.divinciWorkspaceId
+      )
       const finalized = await finalizeChatResult({
         messages: req.messages,
         toolCalls,
@@ -261,6 +271,13 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
         registerAbort: (controller) => {
           state.kimiAbort = controller
         },
+        runKimi: accountMode
+          ? makeAccountChatRunner({
+              workspaceId: userSettings.divinciWorkspaceId!,
+              releaseId: userSettings.divinciReleaseId,
+            })
+          : undefined,
+        routingEnabled: accountMode ? true : undefined,
       })
 
       if (finalized.aborted) {

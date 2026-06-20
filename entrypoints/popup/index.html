@@ -87,8 +87,32 @@
           Saved automatically. Page status pill in sidebar requires these.
         </p>
       </details>
+      <details open>
+        <summary>Divinci account (staging) — recommended</summary>
+        <div class="setting-row setting-row-checkbox">
+          <label for="setting-use-divinci-account" title="Proxy tool-calling through your signed-in Divinci account instead of pasting Cloudflare/Brave/Serper tokens.">Use my Divinci account</label>
+          <input type="checkbox" id="setting-use-divinci-account" />
+        </div>
+        <div class="setting-row">
+          <button id="divinci-signin-btn" class="account-action" type="button">Sign in with Divinci</button>
+        </div>
+        <p class="setting-note" id="divinci-auth-status">Not signed in.</p>
+        <div class="setting-row">
+          <label for="setting-divinci-workspace-id" title="Workspace (whitelabel) id the account chat targets. You must own this workspace.">Workspace ID</label>
+          <input type="text" id="setting-divinci-workspace-id" autocomplete="off" placeholder="24-hex id" />
+        </div>
+        <div class="setting-row">
+          <label for="setting-divinci-release-id" title="Optional. Pin a release; its toolRouting.enabled gates server-side web-search.">Release ID (optional)</label>
+          <input type="text" id="setting-divinci-release-id" autocomplete="off" />
+        </div>
+        <p class="setting-note">
+          When on, tool-calling runs on stage.divinci.app with server-held keys —
+          no Cloudflare/Brave/Serper tokens needed. Web search requires a release
+          with tool routing enabled.
+        </p>
+      </details>
       <details>
-        <summary>Tool APIs (Kimi K2.7-Code + web search)</summary>
+        <summary>Tool APIs (Kimi K2.7-Code + web search) — manual fallback</summary>
         <div class="setting-row">
           <label for="setting-cf-account-id" title="Cloudflare Account ID for Workers AI API. Required for Kimi tool routing.">CF Account ID</label>
           <input type="text" id="setting-cf-account-id" autocomplete="off" placeholder="acct_..." />
