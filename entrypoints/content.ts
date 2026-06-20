@@ -34,6 +34,9 @@ import {
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
+import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
+import { ChatController } from '@/chat-core/chat-controller'
+import type { ChatMessage as CoreChatMessage } from '@/chat-core/inference'
 import type {
   DivinciExternalEvent,
   DivinciExternalRequest,
@@ -120,11 +123,9 @@ function mountSidebar(
   el.modelChip.textContent = MODELS[MODEL_ID].label
 
   // ---- State --------------------------------------------------------------
-  const history: ChatMessage[] = []
   let port: chrome.runtime.Port | null = null
   let isLoaded = false
   let isLoading = false
-  let activeRequestId: string | null = null
   let streamingBubble: HTMLElement | null = null
   let pollTimer: number | null = null
   let disposed = false
@@ -139,6 +140,77 @@ function mountSidebar(
     return `sidebar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
 
+  // ---- chat-core: the chat turn is owned by a ChatController over a
+  // LocalInference, so this surface is just a renderer. The transport is the
+  // port (load/queued events still handled inline below); LocalInference
+  // filters to its own request's chat events. -----------------------------
+  const transportSubscribers = new Set<(ev: DivinciExternalEvent) => void>()
+  const localTransport: LocalTransport = {
+    send: (req) => send(req),
+    subscribe: (h) => {
+      transportSubscribers.add(h)
+      return () => transportSubscribers.delete(h)
+    },
+  }
+  const inference = new LocalInference(localTransport, {
+    modelId: MODEL_ID,
+    label: MODELS[MODEL_ID].label,
+    isLoaded: () => isLoaded,
+  })
+  const controller = new ChatController(
+    inference,
+    {
+      onUserMessage: (m) => {
+        el.empty.hidden = true
+        appendBubble('user', m.content)
+      },
+      onAssistantStart: () => {
+        streamingBubble = appendBubble('assistant', '…')
+        streamingBubble.dataset.placeholder = '1'
+        renderSendButton()
+        scrollToBottom()
+      },
+      onToken: (delta) => {
+        if (!streamingBubble) return
+        if (streamingBubble.dataset.placeholder) {
+          streamingBubble.textContent = ''
+          delete streamingBubble.dataset.placeholder
+        }
+        streamingBubble.textContent = (streamingBubble.textContent ?? '') + delta
+        scrollToBottom()
+      },
+      onAssistantMessage: (m) => {
+        if (streamingBubble?.dataset.placeholder) {
+          // No tokens streamed (e.g. empty generation) — fall back to fullText.
+          streamingBubble.textContent = m.content || '(no response)'
+          delete streamingBubble.dataset.placeholder
+        }
+        finishGeneration()
+      },
+      onAborted: () => {
+        if (streamingBubble?.dataset.placeholder) streamingBubble.textContent = '(stopped)'
+        finishGeneration()
+      },
+      onError: (err) => {
+        if (streamingBubble) {
+          streamingBubble.classList.add('dls-bubble-error')
+          streamingBubble.textContent = `Error: ${err.message}`
+          delete streamingBubble.dataset.placeholder
+        } else {
+          showError(err.message)
+        }
+        finishGeneration()
+        renderModelState()
+      },
+      onBusyChange: () => renderSendButton(),
+    },
+    {
+      // Per-turn page-aware system prompt + WWW RAG grounding (async). The
+      // ChatController prepends these before the conversation history.
+      prepareTurn: async (userText) => buildSystemMessages(await fetchPageContext(userText)),
+    },
+  )
+
   // ---- Port lifecycle -----------------------------------------------------
   // Lazily connect on first open so we don't spin the offscreen up on every
   // page. The port survives until the SW evicts it or the tab closes; if it
@@ -146,7 +218,12 @@ function mountSidebar(
   function ensurePort(): chrome.runtime.Port {
     if (port) return port
     const p = chrome.runtime.connect({ name: SIDEBAR_PORT_NAME })
-    p.onMessage.addListener((msg: DivinciExternalEvent) => onPortEvent(msg))
+    p.onMessage.addListener((msg: DivinciExternalEvent) => {
+      // Fan out to chat-core subscribers (LocalInference) first, then handle
+      // load/model-state events inline.
+      for (const h of transportSubscribers) h(msg)
+      onPortEvent(msg)
+    })
     p.onDisconnect.addListener(() => {
       if (port === p) port = null
     })
@@ -394,10 +471,11 @@ function mountSidebar(
   }
 
   // ---- Port event handling ------------------------------------------------
+  // Load + model-state events only. Chat events (token/done/aborted/chat
+  // errors) are consumed by LocalInference → ChatController via the transport
+  // fan-out; they're not handled here anymore.
   function onPortEvent(ev: DivinciExternalEvent): void {
     switch (ev.type) {
-      case 'divinci:pong':
-        return
       case 'divinci:load-progress':
         isLoading = true
         renderProgress(ev.bytesLoaded, ev.bytesTotal)
@@ -409,53 +487,21 @@ function mountSidebar(
         renderModelState()
         return
       case 'divinci:queued':
+        // Surface queue position on the in-flight placeholder bubble.
         if (streamingBubble) streamingBubble.textContent = `Queued (#${ev.position})…`
         return
-      case 'divinci:chat-token':
-        if (ev.requestId !== activeRequestId || !streamingBubble) return
-        if (streamingBubble.dataset.placeholder) {
-          streamingBubble.textContent = ''
-          delete streamingBubble.dataset.placeholder
-        }
-        streamingBubble.textContent = (streamingBubble.textContent ?? '') + ev.delta
-        scrollToBottom()
-        return
-      case 'divinci:chat-done':
-        if (ev.requestId !== activeRequestId) return
-        if (streamingBubble) {
-          if (streamingBubble.dataset.placeholder) {
-            // No tokens streamed (e.g. empty generation) — fall back to fullText.
-            streamingBubble.textContent = ev.fullText || '(no response)'
-            delete streamingBubble.dataset.placeholder
-          }
-          history.push({ role: 'assistant', content: streamingBubble.textContent ?? '' })
-        }
-        finishGeneration()
-        return
-      case 'divinci:aborted':
-        if (ev.requestId !== activeRequestId) return
-        if (streamingBubble && streamingBubble.dataset.placeholder) {
-          streamingBubble.textContent = '(stopped)'
-        } else if (streamingBubble) {
-          history.push({ role: 'assistant', content: streamingBubble.textContent ?? '' })
-        }
-        finishGeneration()
-        return
       case 'divinci:error':
-        if (ev.requestId && ev.requestId !== activeRequestId) {
+        // Chat-turn errors are rendered by the ChatController (onError). Here we
+        // only own LOAD errors + fatal model-state.
+        if (isLoading) {
+          isLoading = false
+          if (ev.fatal) isLoaded = false
+          renderModelState()
           showError(ev.message)
-          return
+        } else if (ev.fatal) {
+          isLoaded = false
+          renderModelState()
         }
-        if (streamingBubble) {
-          streamingBubble.classList.add('dls-bubble-error')
-          streamingBubble.textContent = `Error: ${ev.message}`
-          delete streamingBubble.dataset.placeholder
-        } else {
-          showError(ev.message)
-        }
-        if (ev.fatal) isLoaded = false
-        finishGeneration()
-        renderModelState()
         return
     }
   }
@@ -469,41 +515,19 @@ function mountSidebar(
 
   function sendChat(): void {
     const text = el.input.value.trim()
-    if (!text || activeRequestId) return
+    if (!text || controller.isBusy()) return
     if (!isLoaded) {
       // First message before load — kick the load and let the user retry once
       // it's ready (clearer than silently queueing a chat that'll error).
       loadModel()
       return
     }
-
     el.input.value = ''
     autosize()
-    el.empty.hidden = true
-
-    history.push({ role: 'user', content: text })
-    appendBubble('user', text)
-
-    streamingBubble = appendBubble('assistant', '…')
-    streamingBubble.dataset.placeholder = '1'
-
-    activeRequestId = newRequestId()
-    const requestId = activeRequestId
-    renderSendButton()
-
-    // Ground with WWW RAG context when the page is indexed/stale, then send.
-    // Fails open: if grounding can't be fetched, we send ungrounded.
-    void (async () => {
-      const ctx = await fetchPageContext(text)
-      // The user may have stopped / a new turn started while we fetched.
-      if (requestId !== activeRequestId) return
-      send({
-        type: 'divinci:chat',
-        requestId,
-        modelId: MODEL_ID,
-        messages: buildPromptMessages(ctx),
-      })
-    })()
+    // The ChatController drives the turn: it fires onUserMessage (user bubble),
+    // onAssistantStart (placeholder), runs prepareTurn (RAG grounding) +
+    // LocalInference, then onToken/onAssistantMessage. Fire-and-forget.
+    void controller.send(text)
     scrollToBottom()
   }
 
@@ -536,38 +560,34 @@ function mountSidebar(
   }
 
   function stopChat(): void {
-    if (!activeRequestId) return
-    send({ type: 'divinci:abort', requestId: activeRequestId })
+    controller.stop()
   }
 
+  // Clear the per-turn bubble ref once a turn settles. Busy/Send-button state is
+  // driven by the controller's onBusyChange.
   function finishGeneration(): void {
-    activeRequestId = null
     streamingBubble = null
     renderSendButton()
     scrollToBottom()
   }
 
   /**
-   * Build the message array sent to the model: a small system prompt that
-   * makes the assistant aware of the page the user is on (local inference,
-   * so no privacy cost), an optional grounding system message carrying the
-   * WWW RAG chunks for this page, then the running conversation.
+   * Build the SYSTEM messages prepended to each turn: a small page-aware system
+   * prompt (local inference, so no privacy cost) plus an optional grounding
+   * message carrying this page's WWW RAG chunks. The ChatController appends the
+   * conversation history after these.
    *
    * `contextChunks` is empty when the page isn't indexed / grounding failed —
    * the chat proceeds ungrounded exactly as before. The chunks go in a
    * SEPARATE, clearly-labelled system message so the local model can tell page
    * context from its own instructions.
    */
-  function buildPromptMessages(
-    contextChunks: string[] = [],
-  ): Array<{ role: 'system' | ChatRole; content: string }> {
+  function buildSystemMessages(contextChunks: string[] = []): CoreChatMessage[] {
     const sys =
       'You are Divinci, a concise, helpful AI assistant running locally in the ' +
       `user's browser via WebGPU. The user is currently viewing the page ` +
       `"${document.title}" (${location.href}). Use that as context only when relevant.`
-    const messages: Array<{ role: 'system' | ChatRole; content: string }> = [
-      { role: 'system', content: sys },
-    ]
+    const messages: CoreChatMessage[] = [{ role: 'system', content: sys }]
     if (contextChunks.length > 0) {
       messages.push({
         role: 'system',
@@ -577,7 +597,7 @@ function mountSidebar(
           contextChunks.map((c, i) => `[${i + 1}] ${c}`).join('\n\n'),
       })
     }
-    return [...messages, ...history]
+    return messages
   }
 
   // ---- Rendering ----------------------------------------------------------
@@ -632,7 +652,7 @@ function mountSidebar(
   }
 
   function renderSendButton(): void {
-    if (activeRequestId) {
+    if (controller.isBusy()) {
       el.send.textContent = 'Stop'
       el.send.dataset.mode = 'stop'
       el.send.disabled = false
@@ -689,7 +709,7 @@ function mountSidebar(
   el.launcher.addEventListener('click', () => setOpen(!root.classList.contains('dls-open')))
   el.close.addEventListener('click', () => setOpen(false))
   el.loadBtn.addEventListener('click', loadModel)
-  el.send.addEventListener('click', () => (activeRequestId ? stopChat() : sendChat()))
+  el.send.addEventListener('click', () => (controller.isBusy() ? stopChat() : sendChat()))
   el.input.addEventListener('input', autosize)
   el.input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {

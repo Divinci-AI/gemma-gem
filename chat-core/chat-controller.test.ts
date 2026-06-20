@@ -37,15 +37,24 @@ describe('ChatController', () => {
     expect(onToken.mock.calls.map((c) => c[0])).toEqual(['a', 'b'])
   })
 
-  it('prepends the system prompt to the inference messages but not to history', async () => {
+  it('prepends prepareTurn messages (async, query-aware) but not to history', async () => {
     let seen: InferenceRequest | null = null
+    const prepareTurn = vi.fn(async (userText: string) => [
+      { role: 'system' as const, content: 'PAGE CONTEXT' },
+      { role: 'system' as const, content: `grounding for: ${userText}` },
+    ])
     const c = new ChatController(
       stubInference(async (req) => { seen = req; return { text: 'ok' } }),
       {},
-      { systemPrompt: () => 'PAGE CONTEXT' },
+      { prepareTurn },
     )
     await c.send('hello')
-    expect(seen!.messages[0]).toEqual({ role: 'system', content: 'PAGE CONTEXT' })
+    expect(prepareTurn).toHaveBeenCalledWith('hello')
+    expect(seen!.messages.slice(0, 2)).toEqual([
+      { role: 'system', content: 'PAGE CONTEXT' },
+      { role: 'system', content: 'grounding for: hello' },
+    ])
+    expect(seen!.messages.at(-1)).toEqual({ role: 'user', content: 'hello' })
     expect(c.history.some((m) => m.role === 'system')).toBe(false)
   })
 
@@ -85,16 +94,37 @@ describe('ChatController', () => {
     expect(c.history.at(-1)).toEqual({ role: 'assistant', content: 'done' })
   })
 
-  it('stop() aborts the in-flight request signal', async () => {
+  it('stop() during inference aborts via the request signal', async () => {
     let aborted = false
+    const onAborted = vi.fn()
     const c = new ChatController(
       stubInference((req) => new Promise<InferenceResult>((resolve) => {
-        req.signal?.addEventListener('abort', () => { aborted = true; resolve({ text: '', aborted: true }) })
+        if (req.signal?.aborted) { resolve({ text: '', aborted: true }); return }
+        req.signal?.addEventListener('abort', () => { aborted = true; resolve({ text: 'partial', aborted: true }) })
       })),
+      { onAborted },
     )
     const p = c.send('go')
+    // Let send() reach inference.chat (past the prepareTurn microtask), THEN stop.
+    await Promise.resolve()
     c.stop()
     await p
     expect(aborted).toBe(true)
+    expect(onAborted).toHaveBeenCalledWith('partial')
+  })
+
+  it('stop() during prepareTurn skips inference and ends the turn aborted', async () => {
+    const chat = vi.fn(async () => ({ text: 'should not run' }))
+    const onAborted = vi.fn()
+    const c = new ChatController(
+      { kind: 'local', label: 'stub', isReady: () => true, chat },
+      { onAborted },
+      { prepareTurn: () => new Promise((r) => setTimeout(() => r([]), 5)) },
+    )
+    const p = c.send('go')
+    c.stop() // aborts while prepareTurn's timer is pending
+    await p
+    expect(chat).not.toHaveBeenCalled()
+    expect(onAborted).toHaveBeenCalled()
   })
 })

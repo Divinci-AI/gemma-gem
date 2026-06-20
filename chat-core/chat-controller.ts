@@ -31,10 +31,12 @@ export interface ChatControllerEvents {
 
 export interface ChatControllerOptions {
   /**
-   * Build a system prompt prepended to the conversation each turn (e.g. the
-   * sidebar's page-aware prompt). Returns undefined for none.
+   * Build messages to PREPEND before the conversation history each turn — e.g.
+   * a page-aware system prompt plus RAG grounding. Receives the user's text so
+   * it can ground on the query, and may be async (the sidebar fetches WWW RAG
+   * chunks here). Returns [] for none. Not stored in history.
    */
-  systemPrompt?: () => string | undefined
+  prepareTurn?: (userText: string) => ChatMessage[] | Promise<ChatMessage[]>
   /** Per-turn inference params. */
   maxNewTokens?: number
   temperature?: number
@@ -86,8 +88,17 @@ export class ChatController {
     this.events.onAssistantStart?.()
 
     try {
+      // prepareTurn (e.g. async RAG grounding) runs after the placeholder is
+      // shown; its messages prepend the history but are not stored.
+      const prefix = (await this.options.prepareTurn?.(content)) ?? []
+      // Stopped during prepareTurn (e.g. the user hit Stop while grounding
+      // fetched)? Don't start inference — treat it as an aborted turn.
+      if (this.abortController?.signal.aborted) {
+        this.events.onAborted?.('')
+        return
+      }
       const result = await this.inference.chat({
-        messages: this.withSystemPrompt(),
+        messages: [...prefix, ...this.messages],
         maxNewTokens: this.options.maxNewTokens,
         temperature: this.options.temperature,
         tools: this.options.tools,
@@ -118,10 +129,5 @@ export class ChatController {
   /** Stop the in-flight turn (the InferenceClient resolves aborted). */
   stop(): void {
     this.abortController?.abort()
-  }
-
-  private withSystemPrompt(): ChatMessage[] {
-    const sys = this.options.systemPrompt?.()
-    return sys ? [{ role: 'system', content: sys }, ...this.messages] : [...this.messages]
   }
 }
