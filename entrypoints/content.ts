@@ -95,7 +95,7 @@ function mountSidebar(
     launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
-    statusPill: root.querySelector<HTMLElement>('.dls-status-pill')!,
+    statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
     modelChip: root.querySelector<HTMLElement>('.dls-model-chip')!,
     accountChip: root.querySelector<HTMLElement>('.dls-account-chip')!,
@@ -460,23 +460,25 @@ function mountSidebar(
 
   function renderModelState(): void {
     if (isLoaded) {
-      el.statusPill.textContent = 'Ready'
-      el.statusPill.dataset.state = 'ready'
+      // Green status dot on the logo = a model is loaded + ready (replaces the
+      // former "Ready" text pill).
+      el.statusDot.dataset.state = 'ready'
+      el.statusDot.title = 'Model loaded — ready'
       el.loadCard.hidden = true
       el.progress.hidden = true
       el.input.disabled = false
       el.input.placeholder = 'Message Gemma 4…'
     } else if (isLoading) {
-      el.statusPill.textContent = 'Loading'
-      el.statusPill.dataset.state = 'loading'
+      el.statusDot.dataset.state = 'loading'
+      el.statusDot.title = 'Loading model…'
       el.loadCard.hidden = false
       el.loadBtn.disabled = true
       el.loadBtn.textContent = 'Loading…'
       el.input.disabled = true
       el.input.placeholder = 'Model loading…'
     } else {
-      el.statusPill.textContent = 'Idle'
-      el.statusPill.dataset.state = 'idle'
+      el.statusDot.dataset.state = 'idle'
+      el.statusDot.title = 'No model loaded'
       el.loadCard.hidden = false
       el.progress.hidden = true
       el.loadBtn.disabled = false
@@ -619,23 +621,22 @@ const TEMPLATE = /* html */ `
   <aside class="dls-panel" role="dialog" aria-label="Divinci local chat">
     <header class="dls-header">
       <div class="dls-title">
-        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-          <path fill="currentColor" d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/>
-        </svg>
-        <span>Divinci Local</span>
-        <span class="dls-status-pill" data-state="idle">Idle</span>
+        <span class="dls-logo" title="Model status">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+            <path fill="currentColor" d="M12 2l2.4 5.6L20 10l-5.6 2.4L12 18l-2.4-5.6L4 10l5.6-2.4z"/>
+          </svg>
+          <span class="dls-status-dot" data-state="idle"></span>
+        </span>
+        <span class="dls-title-text">Divinci Local</span>
         <span class="dls-page-pill" data-state="unknown" hidden></span>
+        <span class="dls-model-chip"></span>
+        <span class="dls-account-chip" data-state="signed-out">
+          <img class="dls-account-avatar" alt="" width="16" height="16" hidden />
+          <span class="dls-account-label">Local only</span>
+        </span>
       </div>
       <button class="dls-close" aria-label="Close">×</button>
     </header>
-
-    <div class="dls-chips">
-      <span class="dls-model-chip"></span>
-      <span class="dls-account-chip" data-state="signed-out">
-        <img class="dls-account-avatar" alt="" width="16" height="16" hidden />
-        <span class="dls-account-label">Local only</span>
-      </span>
-    </div>
 
     <div class="dls-load-card">
       <button class="dls-load-btn">Load model</button>
@@ -719,18 +720,34 @@ const SIDEBAR_CSS = /* css */ `
     padding: 12px 14px;
     border-bottom: 1px solid var(--dls-border);
   }
-  .dls-title { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  .dls-title > svg { color: var(--dls-accent); }
-  .dls-status-pill {
-    font-size: 11px;
-    font-weight: 500;
-    padding: 2px 8px;
-    border-radius: 999px;
-    border: 1px solid var(--dls-border);
-    color: var(--dls-muted);
+  /* Single-row header: logo (with status dot) + title + page/model/account
+     chips, all on one line. flex:1 + min-width:0 lets the account label
+     ellipsize instead of overflowing the 380px panel. */
+  .dls-title { display: flex; align-items: center; gap: 8px; font-weight: 600; flex: 1; min-width: 0; }
+  .dls-title-text { white-space: nowrap; flex-shrink: 0; }
+  /* Robot logo with a small status indicator dot (replaces the "Ready" text). */
+  .dls-logo { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
+  .dls-logo > svg { color: var(--dls-accent); display: block; }
+  .dls-status-dot {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #4a4f60;                       /* idle: dim grey */
+    border: 1.5px solid var(--dls-bg);         /* ring so it reads against the logo */
+    box-sizing: content-box;
   }
-  .dls-status-pill[data-state="ready"] { color: #7ee2a8; border-color: #2c4636; }
-  .dls-status-pill[data-state="loading"] { color: #f2c66b; border-color: #4a3f24; }
+  .dls-status-dot[data-state="ready"] {
+    background: #3fcf8e;                        /* loaded + ready: green */
+    box-shadow: 0 0 5px rgba(63, 207, 142, 0.7);
+  }
+  .dls-status-dot[data-state="loading"] {
+    background: #f2c66b;                        /* loading: amber, pulsing */
+    animation: dls-dot-pulse 1s ease-in-out infinite;
+  }
+  @keyframes dls-dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .dls-page-pill {
     font-size: 10px;
     font-weight: 500;
@@ -756,14 +773,8 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-close:hover { color: var(--dls-text); }
 
-  .dls-chips {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-    padding: 8px 14px;
-    border-bottom: 1px solid var(--dls-border);
-  }
+  /* Model + account chips now live inline in .dls-header (the standalone
+     .dls-chips subheader row was removed). */
   .dls-model-chip {
     font-size: 10px;
     font-weight: 500;
@@ -772,12 +783,14 @@ const SIDEBAR_CSS = /* css */ `
     border: 1px solid var(--dls-border);
     background: var(--dls-bg-2);
     color: var(--dls-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .dls-account-chip {
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    max-width: 60%;
+    min-width: 0;
     font-size: 10px;
     font-weight: 500;
     padding: 2px 8px;
@@ -798,6 +811,7 @@ const SIDEBAR_CSS = /* css */ `
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    max-width: 130px;
   }
 
   .dls-load-card {
