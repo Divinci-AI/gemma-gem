@@ -56,6 +56,10 @@ const MODEL_ID: ModelId = DEFAULT_MODEL_ID
 const STORAGE_KEY_OPEN = 'divinci_sidebar_open'
 const STORAGE_KEY_EXPANDED = 'divinci_sidebar_expanded'
 const STORAGE_KEY_ACTIVE_CONV = 'divinci_active_conversation'
+const STORAGE_KEY_PANEL_WIDTH = 'divinci_sidebar_width'
+const PANEL_WIDTH_DEFAULT = 380
+const PANEL_WIDTH_MIN = 320
+const PANEL_WIDTH_MAX = 760
 const STATUS_POLL_MS = 1500
 
 type ChatRole = 'user' | 'assistant'
@@ -116,6 +120,7 @@ function mountSidebar(
     newChatBtn: root.querySelector<HTMLButtonElement>('.dls-new-chat')!,
     convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
+    resize: root.querySelector<HTMLElement>('.dls-resize')!,
     close: root.querySelector<HTMLButtonElement>('.dls-close')!,
     statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
@@ -1060,6 +1065,52 @@ function mountSidebar(
     }
   })
 
+  // ---- Drag-to-resize the docked panel width ------------------------------
+  // The panel is right-docked, so dragging the left-edge grip leftward widens
+  // it. Width is driven by a CSS var on the root so the expanded full-screen
+  // rule (width:100vw) still wins. Persisted as a px value.
+  function clampPanelWidth(px: number): number {
+    const ceiling = Math.min(PANEL_WIDTH_MAX, Math.round(window.innerWidth * 0.96))
+    return Math.max(PANEL_WIDTH_MIN, Math.min(ceiling, px))
+  }
+  function applyPanelWidth(px: number): void {
+    root.style.setProperty('--dls-panel-width', `${clampPanelWidth(px)}px`)
+  }
+
+  void chrome.storage.local.get(STORAGE_KEY_PANEL_WIDTH).then((s) => {
+    const w = s[STORAGE_KEY_PANEL_WIDTH]
+    if (typeof w === 'number' && Number.isFinite(w)) applyPanelWidth(w)
+  })
+
+  let resizeStartX = 0
+  let resizeStartWidth = PANEL_WIDTH_DEFAULT
+  let resizing = false
+  el.resize.addEventListener('pointerdown', (e) => {
+    // Disabled in full-screen expanded mode.
+    if (root.classList.contains('dls-expanded')) return
+    resizing = true
+    resizeStartX = e.clientX
+    resizeStartWidth = el.panel.getBoundingClientRect().width
+    el.resize.classList.add('dls-resizing')
+    el.resize.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  })
+  el.resize.addEventListener('pointermove', (e) => {
+    if (!resizing) return
+    // Right-docked: moving the grip left (negative dx) increases width.
+    applyPanelWidth(resizeStartWidth + (resizeStartX - e.clientX))
+  })
+  const endResize = (e: PointerEvent) => {
+    if (!resizing) return
+    resizing = false
+    el.resize.classList.remove('dls-resizing')
+    try { el.resize.releasePointerCapture(e.pointerId) } catch { /* already released */ }
+    const width = el.panel.getBoundingClientRect().width
+    void chrome.storage.local.set({ [STORAGE_KEY_PANEL_WIDTH]: Math.round(width) })
+  }
+  el.resize.addEventListener('pointerup', endResize)
+  el.resize.addEventListener('pointercancel', endResize)
+
   // ---- Wire events --------------------------------------------------------
   el.launcher.addEventListener('click', (e) => {
     // Suppress the click that ends a drag so it doesn't also toggle the panel.
@@ -1183,6 +1234,7 @@ const TEMPLATE = /* html */ `
   </button>
 
   <aside class="dls-panel" role="dialog" aria-label="Divinci local chat">
+    <div class="dls-resize" role="separator" aria-orientation="vertical" aria-label="Drag to resize" title="Drag to resize"></div>
     <header class="dls-header">
       <div class="dls-title">
         <span class="dls-logo" title="Model status">
@@ -1319,8 +1371,8 @@ const SIDEBAR_CSS = /* css */ `
     top: 0;
     right: 0;
     height: 100vh;
-    width: 380px;
-    max-width: 92vw;
+    width: var(--dls-panel-width, 380px);
+    max-width: 96vw;
     z-index: 2147483645;
     display: flex;
     flex-direction: column;
@@ -1332,6 +1384,32 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-root.dls-open .dls-panel { transform: translateX(0); }
 
+  /* Drag-to-resize grip on the docked panel's left edge. Hidden in full-screen
+     expanded mode (panel fills the viewport). */
+  .dls-resize {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 6px;
+    height: 100%;
+    cursor: ew-resize;
+    z-index: 1;
+    touch-action: none;
+  }
+  .dls-resize::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 2px;
+    height: 100%;
+    background: transparent;
+    transition: background 0.15s ease;
+  }
+  .dls-resize:hover::before,
+  .dls-resize.dls-resizing::before { background: var(--dls-accent); }
+  .dls-root.dls-expanded .dls-resize { display: none; }
+
   .dls-header {
     display: flex;
     align-items: center;
@@ -1342,7 +1420,7 @@ const SIDEBAR_CSS = /* css */ `
   /* Single-row header: logo (with status dot) + title + page/model/account
      chips, all on one line. flex:1 + min-width:0 lets the account label
      ellipsize instead of overflowing the 380px panel. */
-  .dls-title { display: flex; align-items: center; gap: 8px; font-weight: 600; flex: 1; min-width: 0; }
+  .dls-title { display: flex; align-items: center; gap: 8px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; }
   .dls-title-text { white-space: nowrap; flex-shrink: 0; }
   /* Robot logo with a small status indicator dot (replaces the "Ready" text). */
   .dls-logo { position: relative; display: inline-flex; align-items: center; flex-shrink: 0; }
@@ -1548,7 +1626,10 @@ const SIDEBAR_CSS = /* css */ `
     background: var(--dls-bg-2);
     color: var(--dls-muted);
     white-space: nowrap;
-    flex-shrink: 0;
+    flex-shrink: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     cursor: pointer;
   }
   .dls-model-chip:hover { border-color: var(--dls-accent); color: var(--dls-text); }
@@ -1566,7 +1647,7 @@ const SIDEBAR_CSS = /* css */ `
     background: transparent;
     color: var(--dls-muted);
     cursor: pointer;
-    flex-shrink: 0;
+    flex-shrink: 2;
   }
   .dls-account-chip:hover { border-color: var(--dls-accent); }
   /* Signed-in collapses to a bare avatar circle (matches the popup dropdown):
