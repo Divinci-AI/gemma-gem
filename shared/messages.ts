@@ -287,6 +287,8 @@ export interface InternalSetSettingsRequest {
   wwwRagGrounding?: boolean
   /** Privacy: allow Divinci to use account chats to improve services (default true). */
   allowChatDataUse?: boolean
+  /** Page reading: extract the current page's text on-device for context (default true). */
+  readPageContent?: boolean
 }
 
 // ---- Divinci account (Auth0 PKCE) protocol: popup/offscreen ↔ background SW ----

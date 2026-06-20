@@ -88,6 +88,7 @@ function setupSettingsPersistence(): void {
         // explicit boolean for these toggles, so an off-state still persists.
         wwwRagGrounding: m.wwwRagGrounding ?? prev.wwwRagGrounding,
         allowChatDataUse: m.allowChatDataUse ?? prev.allowChatDataUse,
+        readPageContent: m.readPageContent ?? prev.readPageContent,
       }
       void chrome.storage.local.set({ [STORAGE_KEY_SETTINGS]: next })
     })
@@ -118,6 +119,7 @@ async function hydrateOffscreenSettings(): Promise<void> {
       theme: saved.theme,
       wwwRagGrounding: saved.wwwRagGrounding,
       allowChatDataUse: saved.allowChatDataUse,
+      readPageContent: saved.readPageContent,
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {
       log.warn('Settings hydrate sendMessage failed:', e)

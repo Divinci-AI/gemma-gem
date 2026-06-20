@@ -106,6 +106,15 @@
         <div class="setting-group">
           <p class="setting-subhead">Privacy</p>
           <div class="setting-row setting-row-checkbox">
+            <label for="setting-read-page-content" title="When on, Gemma reads the current page's visible text on your device so it can answer about what's on the page.">Let Gemma read the page</label>
+            <input type="checkbox" id="setting-read-page-content" />
+          </div>
+          <p class="setting-note">
+            Gemma reads the current page's visible text to answer about it. With
+            local inference the page never leaves your browser. Sensitive pages
+            are skipped automatically.
+          </p>
+          <div class="setting-row setting-row-checkbox">
             <label for="setting-www-rag-grounding" title="When on, Divinci retrieves indexed context for the page you're viewing to ground the chat.">Retrieve page context</label>
             <input type="checkbox" id="setting-www-rag-grounding" />
           </div>

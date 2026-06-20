@@ -127,7 +127,20 @@ export interface UserSettings {
    * carries the signal. Default/undefined = allowed.
    */
   allowChatDataUse?: boolean
+  /**
+   * Page reading: when true (default), the extension extracts the CURRENT
+   * page's visible text on-device and includes it as context so the local
+   * model can answer about what's on the page — the extension's core feature.
+   * Extraction is skipped on sensitive pages (url-policy) regardless. With
+   * local Gemma inference the page text never leaves the browser. Default/
+   * undefined = enabled.
+   */
+  readPageContent?: boolean
 }
+
+/** Canonical Divinci legal pages, linked from the in-page chat disclaimer. */
+export const PRIVACY_POLICY_URL = 'https://divinci.ai/privacy-policy/'
+export const TERMS_URL = 'https://divinci.ai/terms-of-service/'
 
 /**
  * Default temperature is 0.7 (not 0/greedy) per Google's Gemma usage
@@ -140,6 +153,7 @@ export const DEFAULT_SETTINGS: UserSettings = {
   maxNewTokens: 512,
   wwwRagGrounding: true,
   allowChatDataUse: true,
+  readPageContent: true,
 }
 
 /**
