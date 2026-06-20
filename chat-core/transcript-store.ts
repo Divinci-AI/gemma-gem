@@ -38,6 +38,9 @@ export interface ConversationSummary {
   updatedAt: number
   /** Set once mirrored/imported to the account; absent = local-only. */
   serverTranscriptId?: string
+  /** How many messages have already been mirrored to the account (the dedupe
+   * offset — the next mirror sends messages[mirroredCount..]). */
+  mirroredCount?: number
 }
 
 export interface StoredConversation extends ConversationSummary {

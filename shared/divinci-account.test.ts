@@ -11,6 +11,11 @@ import {
   buildChatCompletionsBody,
   parseChatCompletion,
   parseChatCompletionResult,
+  buildCreateTranscriptUrl,
+  buildCreateTranscriptBody,
+  parseCreatedTranscriptId,
+  buildIngestBatchUrl,
+  buildIngestBatchBody,
   TOKEN_EXPIRY_SKEW_MS,
 } from '@/shared/divinci-account'
 
@@ -138,5 +143,30 @@ describe('parseChatCompletion', () => {
   })
   it('throws when there is no content', () => {
     expect(() => parseChatCompletion({ choices: [] })).toThrow(/no assistant content/)
+  })
+})
+
+describe('account transcript mirror shaping', () => {
+  it('builds the /white-label create + ingest URLs', () => {
+    expect(buildCreateTranscriptUrl('ws1')).toBe('https://api.stage.divinci.app/white-label/ws1/transcript/')
+    expect(buildIngestBatchUrl('ws1', 't9')).toBe(
+      'https://api.stage.divinci.app/white-label/ws1/transcript/t9/message/batch',
+    )
+  })
+  it('create body carries a title (with fallback)', () => {
+    expect(JSON.parse(buildCreateTranscriptBody('Sky lights'))).toEqual({ title: 'Sky lights' })
+    expect(JSON.parse(buildCreateTranscriptBody(''))).toEqual({ title: 'Chat' })
+  })
+  it('parseCreatedTranscriptId reads _id (throws if absent)', () => {
+    expect(parseCreatedTranscriptId({ _id: 'abc', title: 'x' })).toBe('abc')
+    expect(() => parseCreatedTranscriptId({})).toThrow(/_id/)
+  })
+  it('ingest body wraps verbatim items under { items }', () => {
+    const body = JSON.parse(
+      buildIngestBatchBody([{ role: 'user', content: 'hi', timestamp: 5 }, { role: 'assistant', content: 'yo' }]),
+    )
+    expect(body).toEqual({
+      items: [{ role: 'user', content: 'hi', timestamp: 5 }, { role: 'assistant', content: 'yo' }],
+    })
   })
 })

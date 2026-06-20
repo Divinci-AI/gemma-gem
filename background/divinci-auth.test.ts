@@ -24,7 +24,9 @@ function mkRes(status: number, bodyObj: unknown) {
 const fetchMock = vi.fn()
 ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
 
-import { accountChat } from '@/background/divinci-auth'
+import { accountChat, mirrorConversation } from '@/background/divinci-auth'
+
+const SETTINGS_KEY = 'divinci_local_settings'
 
 const COMPLETION = { choices: [{ message: { content: 'the answer' } }], transcriptId: 'T1' }
 
@@ -117,5 +119,59 @@ describe('accountChat', () => {
     const r = await accountChat({ type: 'internal:account-chat', messages: [{ role: 'user', content: 'unique-e' }], workspaceId: 'ws' })
     expect(r.ok).toBe(false)
     expect(r.error).toMatch(/server 500/)
+  })
+})
+
+describe('mirrorConversation', () => {
+  const mirrorReq = (over: Record<string, unknown> = {}) => ({
+    type: 'internal:account-mirror' as const,
+    title: 'Sky lights',
+    items: [
+      { role: 'user' as const, content: 'hi' },
+      { role: 'assistant' as const, content: 'hello' },
+    ],
+    ...over,
+  })
+
+  it('skips (no-workspace) when no workspace is configured, without fetching', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
+    const r = await mirrorConversation(mirrorReq())
+    expect(r).toMatchObject({ ok: false, skipped: 'no-workspace' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('skips (not-signed-in) when a workspace is set but no token', async () => {
+    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
+    const r = await mirrorConversation(mirrorReq())
+    expect(r).toMatchObject({ ok: false, skipped: 'not-signed-in' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('creates a transcript then batch-ingests when not yet mirrored', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
+    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
+    fetchMock.mockImplementation(async (url: string) =>
+      url.includes('/message/batch')
+        ? mkRes(200, { status: 'ok', inserted: 2 })
+        : mkRes(201, { _id: 'srv1' }),
+    )
+    const r = await mirrorConversation(mirrorReq())
+    expect(r).toMatchObject({ ok: true, serverTranscriptId: 'srv1' })
+    const created = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/transcript/'))
+    const ingested = fetchMock.mock.calls.find((c) => String(c[0]).includes('/message/batch'))
+    expect(created).toBeDefined()
+    expect(ingested).toBeDefined()
+    // ingest targets the created transcript id
+    expect(String(ingested![0])).toContain('/transcript/srv1/message/batch')
+  })
+
+  it('reuses an existing serverTranscriptId (no create, only ingest)', async () => {
+    store[STORAGE_KEY_DIVINCI_AUTH] = validTokens()
+    store[SETTINGS_KEY] = { divinciWorkspaceId: 'ws1' }
+    fetchMock.mockResolvedValue(mkRes(200, { status: 'ok', inserted: 2 }))
+    const r = await mirrorConversation(mirrorReq({ serverTranscriptId: 'srvX' }))
+    expect(r).toMatchObject({ ok: true, serverTranscriptId: 'srvX' })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(String(fetchMock.mock.calls[0][0])).toContain('/transcript/srvX/message/batch')
   })
 })

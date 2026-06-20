@@ -345,6 +345,33 @@ export interface InternalAccountChatResponse {
 }
 
 /**
+ * Sidebar → SW: mirror a local conversation's unmirrored tail to the user's
+ * Divinci account (create the transcript on first mirror, then batch-ingest the
+ * messages verbatim — no inference). The SW resolves the workspace + token; it
+ * skips silently when not signed in / no workspace configured.
+ */
+export interface InternalAccountMirrorRequest {
+  type: 'internal:account-mirror'
+  title: string
+  /** Existing server transcript id, if this conversation was already mirrored. */
+  serverTranscriptId?: string
+  items: Array<{
+    role: 'system' | 'assistant' | 'user' | 'error' | 'social'
+    content: string
+    timestamp?: number
+  }>
+}
+
+/** SW → sidebar: mirror result. `skipped` = couldn't (not signed in / no workspace). */
+export interface InternalAccountMirrorResponse {
+  type: 'internal:account-mirror-response'
+  ok: boolean
+  serverTranscriptId?: string
+  skipped?: 'not-signed-in' | 'no-workspace'
+  error?: string
+}
+
+/**
  * Sidebar → SW: request to open the extension action popup (clicking the
  * sidebar's model chip / account avatar). Best-effort — chrome.action.openPopup
  * is Chrome 127+ and may no-op when triggered indirectly; harmless if so.
@@ -470,6 +497,7 @@ export type InternalRequest =
   | InternalDivinciSignOutRequest
   | InternalDivinciAuthStatusRequest
   | InternalAccountChatRequest
+  | InternalAccountMirrorRequest
   | InternalOpenPopupRequest
 
 /** Offscreen-doc-emitted event. The background routes it back to `caller`. */

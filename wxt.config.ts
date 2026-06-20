@@ -61,7 +61,11 @@ export default defineConfig({
     description:
       'In-browser Gemma 4 inference via WebGPU for chat.divinci.app — model loads once, stays cached, shared across tabs.',
     key: MANIFEST_PUBLIC_KEY,
-    permissions: ['offscreen', 'storage', 'identity'],
+    // unlimitedStorage: conversation history lives in chrome.storage.local
+    // (extension-global, reachable from the content script + SW; a content
+    // script's IndexedDB is the host page's origin, which would silo history
+    // per website). Removes the storage quota for long histories.
+    permissions: ['offscreen', 'storage', 'identity', 'unlimitedStorage'],
     host_permissions: API_HOSTS.map((h) => `${h}/*`),
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.

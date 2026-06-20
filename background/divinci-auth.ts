@@ -26,6 +26,11 @@ import {
   buildChatCompletionsUrl,
   buildChatCompletionsBody,
   parseChatCompletionResult,
+  buildCreateTranscriptUrl,
+  buildCreateTranscriptBody,
+  parseCreatedTranscriptId,
+  buildIngestBatchUrl,
+  buildIngestBatchBody,
 } from '@/shared/divinci-account'
 import { generateCodeVerifier, generateState, computeCodeChallenge } from '@/shared/pkce'
 import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
@@ -34,6 +39,8 @@ import type {
   InternalDivinciAuthStatusResponse,
   InternalAccountChatRequest,
   InternalAccountChatResponse,
+  InternalAccountMirrorRequest,
+  InternalAccountMirrorResponse,
 } from '@/shared/messages'
 
 // ---- token storage ----
@@ -279,6 +286,76 @@ async function readAllowChatDataUse(): Promise<boolean> {
   }
 }
 
+// ---- account transcript mirror (save signed-in chats to Divinci) ----------
+
+async function readMirrorWorkspaceId(): Promise<string | undefined> {
+  try {
+    const stored = await chrome.storage.local.get(STORAGE_KEY_SETTINGS)
+    const s = stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings> | undefined
+    return s?.divinciWorkspaceId || undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Mirror a local conversation's tail to the user's Divinci account: create the
+ * transcript on first mirror, then batch-ingest the messages verbatim (no
+ * inference). Uses the OAuth-capable /white-label routes the web client uses.
+ * Skips silently when not signed in or no workspace is configured.
+ */
+export async function mirrorConversation(
+  req: InternalAccountMirrorRequest,
+): Promise<InternalAccountMirrorResponse> {
+  const RESP = 'internal:account-mirror-response' as const
+  try {
+    const workspaceId = await readMirrorWorkspaceId()
+    if (!workspaceId) return { type: RESP, ok: false, skipped: 'no-workspace' }
+
+    let transcriptId = req.serverTranscriptId
+    if (!transcriptId) {
+      const created = await authedFetch(buildCreateTranscriptUrl(workspaceId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: buildCreateTranscriptBody(req.title),
+      })
+      if (!created.ok) {
+        return created.signedOut
+          ? { type: RESP, ok: false, skipped: 'not-signed-in' }
+          : { type: RESP, ok: false, error: created.error ?? 'create-transcript failed' }
+      }
+      if ((created.status ?? 0) >= 400) {
+        return { type: RESP, ok: false, error: `server ${created.status}: ${(created.text ?? '').substring(0, 160)}` }
+      }
+      try {
+        transcriptId = parseCreatedTranscriptId(JSON.parse(created.text ?? ''))
+      } catch (e) {
+        return { type: RESP, ok: false, error: (e as Error).message }
+      }
+    }
+
+    if (req.items.length > 0) {
+      const ing = await authedFetch(buildIngestBatchUrl(workspaceId, transcriptId), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: buildIngestBatchBody(req.items),
+      })
+      if (!ing.ok) {
+        return ing.signedOut
+          ? { type: RESP, ok: false, skipped: 'not-signed-in' }
+          : { type: RESP, ok: false, error: ing.error ?? 'ingest-batch failed' }
+      }
+      if ((ing.status ?? 0) >= 400) {
+        return { type: RESP, ok: false, error: `server ${ing.status}: ${(ing.text ?? '').substring(0, 160)}` }
+      }
+    }
+
+    return { type: RESP, ok: true, serverTranscriptId: transcriptId }
+  } catch (err) {
+    return { type: RESP, ok: false, error: (err as Error).message ?? String(err) }
+  }
+}
+
 export async function accountChat(req: InternalAccountChatRequest): Promise<InternalAccountChatResponse> {
   try {
     let token = await getValidAccessToken()
@@ -392,6 +469,9 @@ export function setupDivinciAuthBridge(): void {
           return true
         case 'internal:account-chat':
           void accountChat(msg).then((r) => sendResponse(r))
+          return true
+        case 'internal:account-mirror':
+          void mirrorConversation(msg).then((r) => sendResponse(r))
           return true
         default:
           return undefined

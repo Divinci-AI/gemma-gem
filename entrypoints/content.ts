@@ -39,7 +39,7 @@ import { contentHash } from '@/shared/content-hash'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
 import { LocalTranscriptStore } from '@/chat-core/local-transcript-store'
-import { IndexedDbConversationBackend } from '@/chat-core/idb-conversation-backend'
+import { ChromeStorageConversationBackend } from '@/chat-core/chrome-storage-conversation-backend'
 import { renderMarkdown } from '@/chat-core/markdown'
 import { conversationToMarkdown, conversationToJson, filenameSlug } from '@/chat-core/share'
 import type { ChatMessage as CoreChatMessage } from '@/chat-core/inference'
@@ -153,8 +153,10 @@ function mountSidebar(
 
   // ---- Conversation persistence (local IndexedDB; account mirroring is a
   // follow-up once the SDK/OAuth transcript gaps are filled) ----------------
-  const store = new LocalTranscriptStore(new IndexedDbConversationBackend())
+  const store = new LocalTranscriptStore(new ChromeStorageConversationBackend())
   let activeConversationId: string | null = null
+  // Mirror to the Divinci account when signed in (set by renderAccountChip).
+  let accountSignedIn = false
   // Serialize appends so user/assistant writes to the same record don't race.
   let persistQueue: Promise<void> = Promise.resolve()
 
@@ -170,6 +172,49 @@ function mountSidebar(
         if (root.classList.contains('dls-expanded')) void renderConvList()
       })
       .catch(() => { /* persistence is best-effort; never break the chat */ })
+  }
+
+  // Mirror the active conversation's unmirrored tail to the Divinci account when
+  // signed in. Chained onto persistQueue so it runs AFTER the turn is stored
+  // locally (and serialized, so mirroredCount stays consistent). Best-effort.
+  function scheduleMirror(): void {
+    if (!accountSignedIn) return
+    persistQueue = persistQueue.then(() => mirrorActiveTail()).catch(() => {})
+  }
+
+  async function mirrorActiveTail(): Promise<void> {
+    if (!accountSignedIn || activeConversationId == null) return
+    const conv = await store.get(activeConversationId)
+    if (!conv) return
+    const start = conv.mirroredCount ?? 0
+    const tail = conv.messages.slice(start)
+    if (tail.length === 0) return
+    const req: import('@/shared/messages').InternalAccountMirrorRequest = {
+      type: 'internal:account-mirror',
+      title: conv.title,
+      serverTranscriptId: conv.serverTranscriptId,
+      items: tail.map((m) => ({ role: m.role, content: m.content, timestamp: m.createdAt })),
+    }
+    const resp = await new Promise<
+      import('@/shared/messages').InternalAccountMirrorResponse | undefined
+    >((resolve) => {
+      try {
+        chrome.runtime.sendMessage(req, (r) => {
+          void chrome.runtime.lastError
+          resolve(r)
+        })
+      } catch {
+        resolve(undefined)
+      }
+    })
+    if (resp?.ok && resp.serverTranscriptId) {
+      await store.setMirrorState(conv.id, {
+        serverTranscriptId: resp.serverTranscriptId,
+        mirroredCount: conv.messages.length,
+      })
+      // Reflect the now-shareable state if the menu is open.
+      if (root.classList.contains('dls-expanded')) void renderConvList()
+    }
   }
 
   function newRequestId(): string {
@@ -224,6 +269,7 @@ function mountSidebar(
           setBubbleMarkdown(streamingBubble, m.content || '(no response)')
         }
         persistMessage('assistant', m.content)
+        scheduleMirror()
         finishGeneration()
       },
       onAborted: (partial) => {
@@ -231,6 +277,7 @@ function mountSidebar(
         // Persist the partial assistant turn so it survives (matches it being
         // kept in the in-memory history).
         if (partial) persistMessage('assistant', partial)
+        scheduleMirror()
         finishGeneration()
       },
       onError: (err) => {
@@ -320,6 +367,7 @@ function mountSidebar(
   }
 
   function renderAccountChip(resp: InternalDivinciAuthStatusResponse): void {
+    accountSignedIn = Boolean(resp.signedIn)
     if (!resp.signedIn) {
       // Signed-out: compact "Local only" pill, no avatar.
       el.accountChip.dataset.state = 'signed-out'

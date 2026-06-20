@@ -83,6 +83,17 @@ describe('LocalTranscriptStore', () => {
     expect((await store.get(c.id))!.serverTranscriptId).toBe('srv-123')
   })
 
+  it('records mirror state (serverTranscriptId + mirroredCount)', async () => {
+    const store = makeStore()
+    const c = await store.create()
+    await store.appendMessage(c.id, { role: 'user', content: 'a' })
+    await store.appendMessage(c.id, { role: 'assistant', content: 'b' })
+    await store.setMirrorState(c.id, { serverTranscriptId: 'srv-9', mirroredCount: 2 })
+    const got = await store.get(c.id)
+    expect(got!.serverTranscriptId).toBe('srv-9')
+    expect(got!.mirroredCount).toBe(2)
+  })
+
   it('appendMessage on a missing conversation throws', async () => {
     await expect(makeStore().appendMessage('nope', { role: 'user', content: 'x' })).rejects.toThrow(/not found/)
   })

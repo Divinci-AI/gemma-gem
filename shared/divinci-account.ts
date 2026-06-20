@@ -244,3 +244,40 @@ export function parseChatCompletionResult(raw: unknown): { text: string; transcr
   }
   return { text: content, transcriptId: typeof obj.transcriptId === 'string' ? obj.transcriptId : undefined }
 }
+
+// ---- account transcript mirror (the /white-label/* routes the web client
+// uses; they accept the user's Auth0 Bearer) -------------------------------
+
+/** Roles the server's batch-ingest accepts. */
+export type MirrorRole = 'system' | 'assistant' | 'user' | 'error' | 'social'
+
+export interface MirrorMessage {
+  content: string
+  role: MirrorRole
+  /** ms since epoch; server defaults to now when omitted. */
+  timestamp?: number
+}
+
+export function buildCreateTranscriptUrl(workspaceId: string): string {
+  return `${DIVINCI_API_BASE}/white-label/${encodeURIComponent(workspaceId)}/transcript/`
+}
+
+export function buildCreateTranscriptBody(title: string): string {
+  return JSON.stringify({ title: title || 'Chat' })
+}
+
+/** Server returns the new transcript as `{ _id, ... }`. */
+export function parseCreatedTranscriptId(raw: unknown): string {
+  const id = (raw as { _id?: unknown })?._id
+  if (typeof id !== 'string' || !id) throw new Error('create-transcript response had no _id')
+  return id
+}
+
+export function buildIngestBatchUrl(workspaceId: string, transcriptId: string): string {
+  return `${DIVINCI_API_BASE}/white-label/${encodeURIComponent(workspaceId)}/transcript/${encodeURIComponent(transcriptId)}/message/batch`
+}
+
+/** `message/batch` body: verbatim items, no inference. */
+export function buildIngestBatchBody(items: MirrorMessage[]): string {
+  return JSON.stringify({ items })
+}
