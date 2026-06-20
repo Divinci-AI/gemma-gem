@@ -52,6 +52,7 @@ import { ChromeStorageConversationBackend } from '@/chat-core/chrome-storage-con
 import { renderMarkdown } from '@/chat-core/markdown'
 import { conversationToMarkdown, conversationToJson, filenameSlug } from '@/chat-core/share'
 import type { ChatMessage as CoreChatMessage } from '@/chat-core/inference'
+import type { StoredMessage } from '@/chat-core/transcript-store'
 import type {
   DivinciExternalEvent,
   DivinciExternalRequest,
@@ -270,18 +271,29 @@ function mountSidebar(
     await chrome.storage.local.set({ [STORAGE_KEY_TAB_ACTIVE]: setTabActive(map, myTabId, id) })
   }
 
-  function persistMessage(role: 'user' | 'assistant', content: string): void {
-    persistQueue = persistQueue
+  // Returns the stored message id (or null on failure) so the live bubble can be
+  // stamped with it — that link is what lets emoji reactions persist/toggle.
+  function persistMessage(role: 'user' | 'assistant', content: string): Promise<string | null> {
+    const p = persistQueue
       .then(async () => {
         if (activeConversationId == null) {
           const conv = await store.create()
           activeConversationId = conv.id
           await persistActiveConv(conv.id)
         }
-        await store.appendMessage(activeConversationId, { role, content })
+        const m = await store.appendMessage(activeConversationId, { role, content })
         if (root.classList.contains('dls-expanded')) void renderConvList()
+        return m.id
       })
-      .catch(() => { /* persistence is best-effort; never break the chat */ })
+      .catch(() => null)
+    persistQueue = p.then(() => {}) // keep the serialization chain (void)
+    return p
+  }
+
+  /** Link a freshly-appended bubble to its stored message id (for reactions). */
+  function stampMsgId(bubble: HTMLElement | null, id: string | null): void {
+    if (!bubble || !id) return
+    bubble.closest('.dls-bubble-wrap')?.setAttribute('data-msg-id', id)
   }
 
   // Mirror the active conversation's unmirrored tail to the Divinci account when
@@ -354,8 +366,8 @@ function mountSidebar(
     {
       onUserMessage: (m) => {
         el.empty.hidden = true
-        appendBubble('user', m.content)
-        persistMessage('user', m.content)
+        const b = appendBubble('user', m.content)
+        void persistMessage('user', m.content).then((id) => stampMsgId(b, id))
       },
       onAssistantStart: () => {
         streamingBubble = appendBubble('assistant', '…')
@@ -373,13 +385,14 @@ function mountSidebar(
         scrollToBottom()
       },
       onAssistantMessage: (m) => {
-        if (streamingBubble) {
+        const b = streamingBubble
+        if (b) {
           // Streaming showed raw tokens; on completion, render the final text as
           // Markdown (bold/lists/code/links) in one pass.
-          delete streamingBubble.dataset.placeholder
-          setBubbleMarkdown(streamingBubble, m.content || '(no response)')
+          delete b.dataset.placeholder
+          setBubbleMarkdown(b, m.content || '(no response)')
         }
-        persistMessage('assistant', m.content)
+        void persistMessage('assistant', m.content).then((id) => stampMsgId(b, id))
         scheduleMirror()
         finishGeneration()
       },
@@ -865,13 +878,15 @@ function mountSidebar(
   }
 
   // Re-render the thread DOM from a message list (e.g. after switching chats).
-  function renderThread(messages: CoreChatMessage[]): void {
+  function renderThread(messages: ReadonlyArray<CoreChatMessage | StoredMessage>): void {
     el.messages.querySelectorAll('.dls-row').forEach((b) => b.remove())
     el.empty.hidden = messages.length > 0
     for (const m of messages) {
       if (m.role === 'system') continue
-      // Assistant turns render Markdown; user turns stay plain text.
-      appendBubble(m.role, m.content, m.role === 'assistant')
+      const stored = m as StoredMessage
+      // Assistant turns render Markdown; user turns stay plain text. Stored
+      // messages carry their id + reactions so the hover menu can toggle them.
+      appendBubble(m.role, m.content, m.role === 'assistant', stored.id, stored.reactions)
     }
     scrollToBottom()
   }
@@ -883,7 +898,7 @@ function mountSidebar(
     void persistActiveConv(id)
     const msgs: CoreChatMessage[] = conv.messages.map((m) => ({ role: m.role, content: m.content }))
     controller.setHistory(msgs)
-    renderThread(msgs)
+    renderThread(conv.messages)
     void renderConvList()
   }
 
@@ -1175,7 +1190,37 @@ function mountSidebar(
     synth.speak(u)
   }
 
-  function buildMsgActions(bubble: HTMLElement): HTMLElement {
+  // Emoji set offered by the per-message reaction picker (local-first; stored
+  // on the chat-core message). Kept small + universal.
+  const REACTION_EMOJIS = ['👍', '❤️', '😂', '🎉', '😮', '😢']
+
+  /** Toggle a reaction on the message owning `wrap`, then re-render its chips. */
+  async function applyReaction(wrap: HTMLElement, emoji: string): Promise<void> {
+    const msgId = wrap.getAttribute('data-msg-id')
+    if (!msgId || activeConversationId == null) return
+    const reactions = await store.toggleReaction(activeConversationId, msgId, emoji)
+    renderReactions(wrap, reactions)
+  }
+
+  /** Render the persistent reaction chips under a bubble (above the hover bar). */
+  function renderReactions(wrap: HTMLElement, reactions: string[]): void {
+    wrap.querySelector('.dls-reactions')?.remove()
+    if (!reactions || reactions.length === 0) return
+    const row = document.createElement('div')
+    row.className = 'dls-reactions'
+    for (const emoji of reactions) {
+      const chip = document.createElement('button')
+      chip.type = 'button'
+      chip.className = 'dls-reaction'
+      chip.textContent = emoji
+      chip.title = 'Remove reaction'
+      chip.addEventListener('click', () => void applyReaction(wrap, emoji))
+      row.appendChild(chip)
+    }
+    wrap.insertBefore(row, wrap.querySelector('.dls-msg-actions'))
+  }
+
+  function buildMsgActions(bubble: HTMLElement, wrap: HTMLElement): HTMLElement {
     const bar = document.createElement('div')
     bar.className = 'dls-msg-actions'
     const mk = (label: string, cls: string, svg: string, onClick: (b: HTMLButtonElement) => void): HTMLButtonElement => {
@@ -1190,6 +1235,8 @@ function mountSidebar(
     }
     const copyIcon = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10" fill="none" stroke="currentColor" stroke-width="2"/></svg>'
     const speakIcon = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8a5 5 0 0 1 0 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+    const reactIcon = '<svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="9" cy="10" r="1.2" fill="currentColor"/><circle cx="15" cy="10" r="1.2" fill="currentColor"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'
+
     bar.appendChild(mk('Copy', 'dls-copy', copyIcon, (b) => {
       void navigator.clipboard?.writeText(bubble.textContent ?? '').then(
         () => {
@@ -1202,10 +1249,34 @@ function mountSidebar(
     if (window.speechSynthesis) {
       bar.appendChild(mk('Read aloud', 'dls-speak', speakIcon, (b) => toggleSpeak(bubble, b)))
     }
+    bar.appendChild(mk('React', 'dls-react', reactIcon, () => {
+      const existing = wrap.querySelector('.dls-emoji-picker')
+      if (existing) { existing.remove(); return }
+      const picker = document.createElement('div')
+      picker.className = 'dls-emoji-picker'
+      for (const emoji of REACTION_EMOJIS) {
+        const opt = document.createElement('button')
+        opt.type = 'button'
+        opt.className = 'dls-emoji-opt'
+        opt.textContent = emoji
+        opt.addEventListener('click', () => {
+          void applyReaction(wrap, emoji)
+          picker.remove()
+        })
+        picker.appendChild(opt)
+      }
+      bar.appendChild(picker)
+    }))
     return bar
   }
 
-  function appendBubble(role: ChatRole, text: string, markdown = false): HTMLElement {
+  function appendBubble(
+    role: ChatRole,
+    text: string,
+    markdown = false,
+    msgId?: string,
+    reactions?: string[],
+  ): HTMLElement {
     const row = document.createElement('div')
     row.className = `dls-row dls-row-${role === 'user' ? 'user' : 'assistant'}`
     const bubble = document.createElement('div')
@@ -1214,8 +1285,10 @@ function mountSidebar(
     else bubble.textContent = text
     const wrap = document.createElement('div')
     wrap.className = 'dls-bubble-wrap'
+    if (msgId) wrap.setAttribute('data-msg-id', msgId)
     wrap.appendChild(bubble)
-    wrap.appendChild(buildMsgActions(bubble))
+    wrap.appendChild(buildMsgActions(bubble, wrap))
+    if (reactions && reactions.length) renderReactions(wrap, reactions)
     const avatar = buildAvatar(role)
     // User: bubble then avatar (avatar sits bottom-right). Assistant: avatar
     // then bubble (avatar sits bottom-left).
@@ -2269,6 +2342,40 @@ const SIDEBAR_CSS = /* css */ `
   .dls-msg-action:hover { color: var(--dls-text); background: var(--dls-bg-2); }
   .dls-msg-action.dls-acted { color: #3fcf8e; }
   .dls-msg-action.dls-speaking { color: var(--dls-accent); }
+
+  /* Persistent reaction chips under a bubble. */
+  .dls-reactions { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 3px; }
+  .dls-reaction {
+    font-size: 12px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    background: var(--dls-bg-2);
+    cursor: pointer;
+  }
+  .dls-reaction:hover { border-color: var(--dls-accent); }
+  /* Inline emoji picker opened by the React action. */
+  .dls-emoji-picker {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+    margin-left: 4px;
+    padding: 2px 4px;
+    border-radius: 999px;
+    border: 1px solid var(--dls-border);
+    background: var(--dls-bg);
+  }
+  .dls-emoji-opt {
+    background: transparent;
+    border: none;
+    font-size: 15px;
+    line-height: 1;
+    padding: 1px 2px;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .dls-emoji-opt:hover { background: var(--dls-bg-2); transform: scale(1.15); }
 
   /* Dictation mic button in the composer. */
   .dls-mic {

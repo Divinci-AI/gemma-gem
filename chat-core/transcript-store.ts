@@ -29,6 +29,8 @@ export interface StoredMessage extends ChatMessage {
   id: string
   /** Epoch ms. */
   createdAt: number
+  /** Emoji reactions on this message (local-first; deduped). */
+  reactions?: string[]
 }
 
 export interface ConversationSummary {

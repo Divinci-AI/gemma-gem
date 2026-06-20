@@ -113,6 +113,20 @@ export class LocalTranscriptStore implements TranscriptStore {
     conv.mirroredCount = state.mirroredCount
     await this.backend.put(conv)
   }
+
+  /** Toggle an emoji reaction on a message; returns the new (deduped) list. */
+  async toggleReaction(convId: string, messageId: string, emoji: string): Promise<string[]> {
+    const conv = await this.backend.get(convId)
+    if (!conv) return []
+    const msg = conv.messages.find((m) => m.id === messageId)
+    if (!msg) return []
+    const set = new Set(msg.reactions ?? [])
+    if (set.has(emoji)) set.delete(emoji)
+    else set.add(emoji)
+    msg.reactions = [...set]
+    await this.backend.put(conv)
+    return msg.reactions
+  }
 }
 
 /**

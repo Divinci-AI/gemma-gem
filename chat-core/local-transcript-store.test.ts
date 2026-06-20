@@ -95,6 +95,24 @@ describe('LocalTranscriptStore', () => {
     expect(got!.mirroredCount).toBe(2)
   })
 
+  it('toggles emoji reactions on a message (add then remove, deduped)', async () => {
+    const store = makeStore()
+    const c = await store.create()
+    const m = await store.appendMessage(c.id, { role: 'assistant', content: 'hi' })
+    expect(await store.toggleReaction(c.id, m.id, '👍')).toEqual(['👍'])
+    expect(await store.toggleReaction(c.id, m.id, '❤️')).toEqual(['👍', '❤️'])
+    expect(await store.toggleReaction(c.id, m.id, '👍')).toEqual(['❤️']) // toggle off
+    const got = await store.get(c.id)
+    expect(got!.messages[0].reactions).toEqual(['❤️'])
+  })
+
+  it('toggleReaction is a no-op for unknown conversation/message', async () => {
+    const store = makeStore()
+    const c = await store.create()
+    expect(await store.toggleReaction('nope', 'x', '👍')).toEqual([])
+    expect(await store.toggleReaction(c.id, 'nope', '👍')).toEqual([])
+  })
+
   it('appendMessage on a missing conversation throws', async () => {
     await expect(makeStore().appendMessage('nope', { role: 'user', content: 'x' })).rejects.toThrow(/not found/)
   })
