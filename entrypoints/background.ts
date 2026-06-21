@@ -27,11 +27,13 @@ import {
   STORAGE_KEY_MODEL,
   STORAGE_KEY_SETTINGS,
   STORAGE_KEY_WARM_STATE,
+  STORAGE_KEY_WARM_PENDING_AT,
   DEFAULT_SETTINGS,
   type ModelId,
   type UserSettings,
   type WarmState,
 } from '@/shared/models'
+import { decideAutoWarm } from '@/background/auto-warm-decision'
 import type {
   InternalLoadRequest,
   InternalSetSettingsRequest,
@@ -40,42 +42,48 @@ import type {
 
 async function autoWarmIfRemembered(): Promise<void> {
   try {
-    const stored = await chrome.storage.local.get([STORAGE_KEY_MODEL, STORAGE_KEY_WARM_STATE])
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEY_MODEL,
+      STORAGE_KEY_WARM_STATE,
+      STORAGE_KEY_WARM_PENDING_AT,
+    ])
     const modelId = stored[STORAGE_KEY_MODEL] as ModelId | undefined
-    if (!modelId) {
-      log.info('No remembered model — skipping auto-warm')
+
+    // Crash-loop guard (see STORAGE_KEY_WARM_STATE / decideAutoWarm). The SW
+    // re-runs this on every startup, including the ~30s eviction cycle — so a
+    // WebGPU/ONNX load that hard-crashes the renderer/SW would otherwise loop
+    // forever, surfacing the browser's "extension has crashed" balloon over and
+    // over. The timestamp lets us tell a real crash (stale 'pending') from a
+    // load still in flight after a normal eviction (recent 'pending').
+    const decision = decideAutoWarm({
+      modelId,
+      warmState: stored[STORAGE_KEY_WARM_STATE] as WarmState | undefined,
+      pendingAt: stored[STORAGE_KEY_WARM_PENDING_AT] as number | undefined,
+      now: Date.now(),
+    })
+
+    if (decision.action === 'skip') {
+      log.info(`Auto-warm skipped: ${decision.reason}`)
       return
     }
-
-    // Crash-loop guard (see STORAGE_KEY_WARM_STATE). The SW re-runs this on
-    // every startup, including the ~30s eviction cycle — so a WebGPU/ONNX load
-    // that hard-crashes the renderer/SW would otherwise loop forever, surfacing
-    // the browser's "extension has crashed" balloon over and over.
-    const warmState = stored[STORAGE_KEY_WARM_STATE] as WarmState | undefined
-    if (warmState === 'pending') {
-      // The previous auto-warm set 'pending' and never transitioned to
-      // 'ok'/'failed' — i.e. it crashed before reporting back. Disable
-      // auto-warm; a manual Load (which records 'ok') re-enables it.
-      log.warn(
-        'Previous auto-warm did not complete (likely a model-load crash). ' +
-          'Disabling auto-warm — open the popup and click Load to retry.',
-      )
+    if (decision.action === 'disable') {
+      log.warn(`Auto-warm disabled: ${decision.reason}. Open the popup and click Load to retry.`)
       await chrome.storage.local.set({ [STORAGE_KEY_WARM_STATE]: 'disabled' satisfies WarmState })
       return
     }
-    if (warmState === 'disabled' || warmState === 'failed') {
-      log.info(`Auto-warm skipped (warm state: ${warmState}); manual Load required to re-enable.`)
-      return
-    }
 
+    // decision.action === 'warm'
     log.info(`Auto-warming remembered model: ${modelId}`)
-    // Mark 'pending' BEFORE dispatching the load so a crash mid-load is visible
-    // to the next startup as an incomplete attempt.
-    await chrome.storage.local.set({ [STORAGE_KEY_WARM_STATE]: 'pending' satisfies WarmState })
+    // Mark 'pending' + stamp the time BEFORE dispatching, so a crash mid-load is
+    // visible to the next startup as a stale incomplete attempt.
+    await chrome.storage.local.set({
+      [STORAGE_KEY_WARM_STATE]: 'pending' satisfies WarmState,
+      [STORAGE_KEY_WARM_PENDING_AT]: Date.now(),
+    })
     const req: InternalLoadRequest = {
       type: 'internal:load',
       requestId: `autowarm-${Date.now()}`,
-      modelId,
+      modelId: modelId!,
       caller: 'autowarm',
     }
     chrome.runtime.sendMessage(req as Message).catch((e) => {

@@ -56,6 +56,12 @@ export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
 // clicks Load — breaking the loop. Values: 'pending' | 'ok' | 'failed' | 'disabled'.
 export const STORAGE_KEY_WARM_STATE = 'divinci_local_warm_state'
 export type WarmState = 'pending' | 'ok' | 'failed' | 'disabled'
+// Timestamp (ms) recorded alongside a 'pending' warm state. Lets the startup
+// guard distinguish a genuine crash (pending that's been stale for longer than
+// any plausible load) from a load that's merely still in flight after a normal
+// ~30s SW eviction — a multi-step VRAM load can outlive the worker that kicked
+// it off, and we must NOT misread that as a crash and disable auto-warm.
+export const STORAGE_KEY_WARM_PENDING_AT = 'divinci_local_warm_pending_at'
 // In-page sidebar handle: persisted drag position (viewport fraction) + a
 // "completely hidden" flag (set by double-clicking the handle, restored from
 // the popup's Appearance toggle).
