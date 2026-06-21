@@ -175,7 +175,17 @@ function mountSidebar(
     disclaimerText: root.querySelector<HTMLElement>('.dls-disclaimer-text')!,
   }
   el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
-  el.modelChip.textContent = MODELS[MODEL_ID].label
+  // Colored Gemma mark + label. replaceChildren (not innerHTML) keeps us off the
+  // HTML-injection path; the logo is a static bundled data URI, the label a const.
+  el.modelChip.replaceChildren()
+  const chipLogo = document.createElement('img')
+  chipLogo.src = GEMMA_LOGO_DATA_URI
+  chipLogo.alt = ''
+  chipLogo.className = 'dls-model-chip-logo'
+  const chipLabel = document.createElement('span')
+  chipLabel.className = 'dls-model-chip-label'
+  chipLabel.textContent = MODELS[MODEL_ID].label
+  el.modelChip.append(chipLogo, chipLabel)
 
   // ---- State --------------------------------------------------------------
   let port: chrome.runtime.Port | null = null
@@ -634,7 +644,15 @@ function mountSidebar(
     const state = pageStatus as string
     // Hide the pill for non-actionable states — including 'not-configured'
     // ("WWW RAG off"), which is just noise in the header.
-    if (!pageStatus || state === 'error' || state === 'unavailable' || state === 'not-configured') {
+    if (
+      !pageStatus ||
+      state === 'error' ||
+      state === 'unavailable' ||
+      state === 'not-configured' ||
+      // "Not indexed" is noise in the header — WWW RAG just grounds silently when
+      // a page happens to be indexed; we don't advertise the absence of it.
+      state === 'not-indexed'
+    ) {
       el.pagePill.hidden = true
       return
     }
@@ -2180,11 +2198,11 @@ const TEMPLATE = /* html */ `
         </div>
 
         <div class="dls-messages">
-          <p class="dls-empty">Ask Gemma 4 anything — it runs entirely on your GPU, on any page.</p>
+          <p class="dls-empty"><span class="dls-empty-title">Ask Gemma 4 anything</span>It runs entirely on your GPU, on any page.</p>
         </div>
 
         <footer class="dls-footer">
-          <p class="dls-safety">Gemma is an AI model and can make mistakes — verify important information.</p>
+          <p class="dls-safety">AI can make mistakes — verify important information.</p>
           <div class="dls-compose-row">
             <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
             <button class="dls-mic" type="button" aria-label="Dictate (speech to text)" title="Dictate" hidden>
@@ -2586,10 +2604,13 @@ const SIDEBAR_CSS = /* css */ `
   /* Model + account chips now live inline in .dls-header (the standalone
      .dls-chips subheader row was removed). */
   .dls-model-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-family: inherit;
     font-size: 10px;
     font-weight: 500;
-    padding: 2px 8px;
+    padding: 2px 8px 2px 5px;
     border-radius: 999px;
     border: 1px solid var(--dls-border);
     background: var(--dls-bg-2);
@@ -2597,11 +2618,11 @@ const SIDEBAR_CSS = /* css */ `
     white-space: nowrap;
     flex-shrink: 1;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
     cursor: pointer;
   }
   .dls-model-chip:hover { border-color: var(--dls-accent); color: var(--dls-text); }
+  .dls-model-chip-logo { width: 14px; height: 14px; border-radius: 4px; flex-shrink: 0; display: block; }
+  .dls-model-chip-label { overflow: hidden; text-overflow: ellipsis; }
   .dls-account-chip {
     display: inline-flex;
     align-items: center;
@@ -2700,6 +2721,7 @@ const SIDEBAR_CSS = /* css */ `
     gap: 10px;
   }
   .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; }
+  .dls-empty-title { display: block; font-size: 15px; font-weight: 600; color: var(--dls-text); margin-bottom: 3px; }
 
   /* Message row = avatar + bubble, bottom-aligned so the avatar sits in the
      bottom corner of the bubble. */
@@ -2829,6 +2851,7 @@ const SIDEBAR_CSS = /* css */ `
     justify-content: center;
     flex-shrink: 0;
     width: 38px;
+    height: 36px;
     background: transparent;
     border: 1px solid var(--dls-border);
     border-radius: 8px;
@@ -2923,7 +2946,8 @@ const SIDEBAR_CSS = /* css */ `
   .dls-input:focus { outline: none; border-color: var(--dls-accent); }
   .dls-input:disabled { opacity: 0.6; }
   .dls-send {
-    padding: 8px 14px;
+    height: 36px;
+    padding: 0 16px;
     border: none;
     border-radius: 8px;
     font-size: 13px;
