@@ -47,6 +47,15 @@ export const MODELS: Record<ModelId, ModelConfig> = {
 export const DEFAULT_MODEL_ID: ModelId = 'gemma-4-e2b'
 export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
 export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
+// Auto-warm crash-loop guard. The SW auto-warms the remembered model on every
+// startup (incl. the ~30s eviction cycle); if a WebGPU/ONNX load hard-crashes
+// the renderer or SW, that turns into a reload→warm→crash→reload loop (the
+// browser's "extension has crashed" balloon, repeating). This persists the
+// outcome of the LAST auto-warm so a crash (recorded as 'pending' that never
+// transitioned to 'ok'/'failed') disables auto-warm until the user manually
+// clicks Load — breaking the loop. Values: 'pending' | 'ok' | 'failed' | 'disabled'.
+export const STORAGE_KEY_WARM_STATE = 'divinci_local_warm_state'
+export type WarmState = 'pending' | 'ok' | 'failed' | 'disabled'
 // In-page sidebar handle: persisted drag position (viewport fraction) + a
 // "completely hidden" flag (set by double-clicking the handle, restored from
 // the popup's Appearance toggle).

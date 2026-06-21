@@ -35,6 +35,19 @@ import { DEFAULT_SETTINGS, type UserSettings } from '@/shared/models'
 
 const host = new ChatHost()
 
+// Global safety net for the WebGPU/ONNX inference path. The per-request
+// try/catch in handleLoad/handleChat already turns awaited failures into a
+// divinci:error event; this catches anything that escapes (e.g. a rejection
+// from a detached streamer microtask) so it's logged loudly instead of
+// silently dying. A hard GPU-process crash kills this whole renderer and
+// cannot be caught here — the SW's auto-warm crash-loop guard handles that.
+self.addEventListener('unhandledrejection', (event) => {
+  log.error('offscreen unhandledrejection:', (event as PromiseRejectionEvent).reason)
+})
+self.addEventListener('error', (event) => {
+  log.error('offscreen error:', (event as ErrorEvent).message || event)
+})
+
 // Per-model cached-bytes breakdown. Recomputed after load-done and on
 // clear-cache (via recomputeCacheBreakdown()). Read out of getStatus().
 let cacheBreakdown: CacheBreakdown = emptyBreakdown()
