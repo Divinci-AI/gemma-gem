@@ -1476,7 +1476,9 @@ function mountSidebar(
         mcpReleaseSel = targetId
       }
       const nextIds = toggleMcpId(curEnabled, sid, want)
-      const patch = await divinciApi('PATCH', `/api/v1/releases/${encodeURIComponent(targetId)}`, {
+      // Focused partial update — NOT PATCH /:id (a full-object replace that would
+      // wipe every release field we don't send). /tools touches only the tool list.
+      const patch = await divinciApi('PATCH', `/api/v1/releases/${encodeURIComponent(targetId)}/tools`, {
         enabledMcpServerIds: nextIds,
       })
       cb.disabled = false
