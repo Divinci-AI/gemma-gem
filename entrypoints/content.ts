@@ -42,6 +42,7 @@ import {
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
+import { toggleMcpId, releaseEditAction, forkTitleFor } from '@/shared/mcp-release'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
 import { LocalTranscriptStore } from '@/chat-core/local-transcript-store'
@@ -1365,6 +1366,161 @@ function mountSidebar(
     })
     form.append(nameI, urlI, transSel, add, err)
     body.appendChild(form)
+
+    await renderMcpReleaseSection(body, servers)
+  }
+
+  // "Enable for chat": which MCP servers a release's assistant may call. Stored
+  // as Release.enabledMcpServerIds, which is DRAFT-ONLY server-side — so editing
+  // a published release forks an editable draft first (POST .../fork, which now
+  // carries the enabled list over), and a draft goes live via POST .../publish.
+  let mcpReleaseSel: string | null = null
+
+  async function renderMcpReleaseSection(
+    body: HTMLElement,
+    servers: Array<Record<string, unknown>>,
+  ): Promise<void> {
+    body.appendChild(toolsSection('Enable for chat'))
+    if (servers.length === 0) {
+      const e = document.createElement('p')
+      e.className = 'dls-tools-empty'
+      e.textContent = 'Add a server above, then enable it on the release your chat uses.'
+      body.appendChild(e)
+      return
+    }
+    const hint = document.createElement('p')
+    hint.className = 'dls-tools-empty'
+    hint.textContent =
+      "Pick the release your chat uses, then check which servers' tools the assistant may call. Editing a published release forks a draft you then publish."
+    body.appendChild(hint)
+
+    const relResp = await divinciApi('GET', '/api/v1/releases')
+    if (relResp?.noKey) { body.appendChild(noKeyNotice()); return }
+    const releases = Array.isArray(relResp?.data) ? (relResp!.data as Array<Record<string, unknown>>) : []
+    if (releases.length === 0) {
+      const e = document.createElement('p')
+      e.className = 'dls-tools-empty'
+      e.textContent = 'No releases found for this workspace.'
+      body.appendChild(e)
+      return
+    }
+
+    const relId = (r: Record<string, unknown>): string => String(r._id ?? r.id ?? '')
+
+    const sel = document.createElement('select')
+    sel.className = 'dls-tools-input'
+    for (const r of releases) {
+      const o = document.createElement('option')
+      o.value = relId(r)
+      o.textContent = `${String(r.title ?? '(untitled)')} · ${String(r.status ?? '')}`
+      sel.appendChild(o)
+    }
+    if (mcpReleaseSel && releases.some((r) => relId(r) === mcpReleaseSel)) sel.value = mcpReleaseSel
+    else mcpReleaseSel = sel.value
+    body.appendChild(sel)
+
+    const statusEl = document.createElement('div')
+    const checklist = document.createElement('div')
+    checklist.className = 'dls-tools-checklist'
+    body.append(statusEl, checklist)
+
+    function setStatus(msg: string, isErr: boolean): void {
+      statusEl.textContent = msg
+      statusEl.className = isErr ? 'dls-tools-err' : 'dls-tools-ok'
+    }
+
+    async function applyToggle(
+      rel: Record<string, unknown>,
+      relStatus: string,
+      enabled: string[],
+      sid: string,
+      cb: HTMLInputElement,
+    ): Promise<void> {
+      const want = cb.checked
+      cb.disabled = true
+      let targetId = mcpReleaseSel!
+      let curEnabled = enabled
+      // enabledMcpServerIds is draft-only — fork a published release into a draft
+      // first (the fork carries the existing enabled list over server-side).
+      if (releaseEditAction(relStatus) === 'fork') {
+        const fk = await divinciApi('POST', `/api/v1/releases/${encodeURIComponent(targetId)}/fork`, {
+          title: forkTitleFor(String(rel.title ?? '')),
+        })
+        const draft = fk?.ok && fk.data && typeof fk.data === 'object' ? (fk.data as Record<string, unknown>) : null
+        if (!draft) {
+          cb.checked = !want
+          cb.disabled = false
+          setStatus(`Fork failed${fk?.status ? ` (${fk.status})` : ''}.`, true)
+          return
+        }
+        targetId = relId(draft)
+        curEnabled = Array.isArray(draft.enabledMcpServerIds) ? (draft.enabledMcpServerIds as unknown[]).map(String) : []
+        mcpReleaseSel = targetId
+      }
+      const nextIds = toggleMcpId(curEnabled, sid, want)
+      const patch = await divinciApi('PATCH', `/api/v1/releases/${encodeURIComponent(targetId)}`, {
+        enabledMcpServerIds: nextIds,
+      })
+      cb.disabled = false
+      if (!patch?.ok) {
+        cb.checked = !want
+        setStatus(`Update failed${patch?.status ? ` (${patch.status})` : ''}.`, true)
+        return
+      }
+      // Re-render so a just-forked draft surfaces as the selected release + Publish button.
+      renderToolsTabs()
+    }
+
+    async function loadChecklist(): Promise<void> {
+      setStatus('', false)
+      checklist.replaceChildren()
+      checklist.textContent = 'Loading…'
+      const r = await divinciApi('GET', `/api/v1/releases/${encodeURIComponent(mcpReleaseSel!)}`)
+      const rel = r?.ok && r.data && typeof r.data === 'object' ? (r.data as Record<string, unknown>) : null
+      checklist.replaceChildren()
+      if (!rel) { setStatus('Failed to load the release.', true); return }
+      const relStatus = String(rel.status ?? '')
+      const enabled = Array.isArray(rel.enabledMcpServerIds) ? (rel.enabledMcpServerIds as unknown[]).map(String) : []
+
+      if (releaseEditAction(relStatus) === 'fork') {
+        const note = document.createElement('p')
+        note.className = 'dls-tools-empty'
+        note.textContent = 'Published — changing a tool here forks an editable draft (publish it to go live).'
+        checklist.appendChild(note)
+      }
+
+      for (const s of servers) {
+        const sid = String(s.id)
+        const row = document.createElement('label')
+        row.className = 'dls-tools-check-row'
+        const cb = document.createElement('input')
+        cb.type = 'checkbox'
+        cb.checked = enabled.includes(sid)
+        const span = document.createElement('span')
+        span.textContent = String(s.name)
+        row.append(cb, span)
+        cb.addEventListener('change', () => { void applyToggle(rel, relStatus, enabled, sid, cb) })
+        checklist.appendChild(row)
+      }
+
+      if (relStatus === 'draft') {
+        const pub = document.createElement('button')
+        pub.className = 'dls-tools-btn-sm dls-primary'
+        pub.style.marginTop = '8px'
+        pub.textContent = 'Publish release'
+        pub.addEventListener('click', async () => {
+          pub.disabled = true
+          const pr = await divinciApi('POST', `/api/v1/releases/${encodeURIComponent(mcpReleaseSel!)}/publish`)
+          pub.disabled = false
+          if (pr?.ok) { setStatus('Published — live for new chats.', false); renderToolsTabs() }
+          else setStatus(`Publish failed${pr?.status ? ` (${pr.status})` : ''}.`, true)
+        })
+        checklist.appendChild(pub)
+      }
+    }
+
+    sel.addEventListener('change', () => { mcpReleaseSel = sel.value; void loadChecklist() })
+    void loadChecklist()
   }
 
   // Per-message hover quick-menu: Copy + Speak (TTS via the browser's
@@ -2338,6 +2494,14 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-tools-input:focus { outline: none; border-color: var(--dls-accent); }
   .dls-tools-err { color: #ff9b9b; font-size: 12px; }
+  .dls-tools-ok { color: #8fe39b; font-size: 12px; }
+  .dls-tools-checklist { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .dls-tools-check-row {
+    display: flex; align-items: center; gap: 8px; font-size: 13px;
+    color: var(--dls-text); cursor: pointer; padding: 3px 0;
+  }
+  .dls-tools-check-row input { cursor: pointer; }
+  .dls-tools-check-row.dls-disabled { opacity: 0.5; cursor: default; }
 
   /* Body splits into the conversation rail (expanded only) + the main column. */
   .dls-body { display: flex; flex: 1; min-height: 0; }
