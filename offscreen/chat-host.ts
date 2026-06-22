@@ -29,6 +29,17 @@ if (env.backends.onnx?.wasm) {
   env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('ort/')
 }
 
+// Persist downloaded model weights in the Cache API (extension-origin, disk-
+// backed, kept off the quota by the `unlimitedStorage` permission) so a reload
+// after the offscreen document is torn down (page refresh, SW eviction, memory
+// reclaim) reads from disk instead of re-fetching ~2.9 GB from Hugging Face.
+// This is transformers.js's default, but we set it explicitly so a library
+// default flip can't silently turn caching off. allowRemoteModels stays on for
+// the first-ever download; allowLocalModels off (we have no bundled weights).
+env.useBrowserCache = true
+env.allowRemoteModels = true
+env.allowLocalModels = false
+
 export type LoadProgressFn = (info: {
   fraction: number | null
   bytesLoaded: number

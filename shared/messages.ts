@@ -112,6 +112,13 @@ export interface DivinciExternalLoadProgressEvent {
   bytesLoaded: number
   bytesTotal: number | null
   currentFile?: string
+  /**
+   * True when the model's weights are already in the Cache API, so this load
+   * is reading from disk (no network). Lets the UI say "Loading from cache"
+   * instead of "Downloading" — e.g. after a page refresh that recreated the
+   * offscreen document but kept the cached weights.
+   */
+  fromCache?: boolean
 }
 
 /**
@@ -129,6 +136,8 @@ export interface DivinciExternalLoadDoneEvent {
   type: 'divinci:load-done'
   requestId: string
   loadTimeMs: number
+  /** True when this load was served from the Cache API (no network fetch). */
+  fromCache?: boolean
 }
 
 export interface DivinciExternalChatTokenEvent {

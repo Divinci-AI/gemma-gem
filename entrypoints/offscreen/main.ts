@@ -133,6 +133,12 @@ void recomputeCacheBreakdown()
 
 async function handleLoad(req: InternalLoadRequest): Promise<void> {
   const start = Date.now()
+  // Snapshot cache state BEFORE the load: if the weights are already on disk
+  // this load reads from cache (no network), so the UI should say "Loading
+  // from cache" not "Downloading". The breakdown is recomputed at offscreen
+  // init + after every load, so it's accurate even for a freshly-recreated
+  // offscreen (e.g. after a page refresh that tore down the previous one).
+  const fromCache = cacheBreakdown[req.modelId]?.isCached === true
   try {
     await host.load(req.modelId, (info) => {
       emit(req.caller, {
@@ -142,6 +148,7 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
         bytesLoaded: info.bytesLoaded,
         bytesTotal: info.bytesTotal,
         currentFile: info.currentFile,
+        fromCache,
       })
     })
     // After a successful load, the model's bytes are now in Cache API
@@ -152,6 +159,7 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
       type: 'divinci:load-done',
       requestId: req.requestId,
       loadTimeMs: Date.now() - start,
+      fromCache,
     })
   } catch (err) {
     emit(req.caller, {

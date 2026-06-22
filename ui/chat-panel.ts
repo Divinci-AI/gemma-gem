@@ -203,6 +203,9 @@ export function mountChatPanel(
   let port: chrome.runtime.Port | null = null
   let isLoaded = false
   let isLoading = false
+  // Whether the in-flight load is reading cached weights (no network). Drives
+  // the "Loading from cache" vs "Downloading model" progress label.
+  let loadFromCache = false
   let streamingBubble: HTMLElement | null = null
   let pollTimer: number | null = null
   let disposed = false
@@ -740,7 +743,10 @@ export function mountChatPanel(
 
     if (isLoading && status.loadProgress) {
       const { bytesLoaded, bytesTotal } = status.loadProgress
-      renderProgress(bytesLoaded, bytesTotal)
+      // The status response carries the cache breakdown; if our model's weights
+      // are already on disk, a load in progress is a cache read, not a download.
+      loadFromCache = status.cacheBreakdown?.[MODEL_ID]?.isCached ?? false
+      renderProgress(bytesLoaded, bytesTotal, loadFromCache)
     }
     renderModelState()
   }
@@ -753,7 +759,8 @@ export function mountChatPanel(
     switch (ev.type) {
       case 'divinci:load-progress':
         isLoading = true
-        renderProgress(ev.bytesLoaded, ev.bytesTotal)
+        if (typeof ev.fromCache === 'boolean') loadFromCache = ev.fromCache
+        renderProgress(ev.bytesLoaded, ev.bytesTotal, loadFromCache)
         renderModelState()
         return
       case 'divinci:load-done':
@@ -1725,14 +1732,17 @@ export function mountChatPanel(
     bubble.innerHTML = renderMarkdown(text)
   }
 
-  function renderProgress(loaded: number, total: number | null): void {
+  function renderProgress(loaded: number, total: number | null, fromCache = false): void {
     el.progress.hidden = false
     const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : null
     el.progressFill.style.width = pct != null ? `${pct}%` : '15%'
+    // "Loading from cache" when the weights are already on disk (e.g. after a
+    // refresh) — reassures the user it's NOT re-downloading ~2.9 GB.
+    const verb = fromCache ? 'Loading from cache' : 'Downloading model'
     el.progressText.textContent =
       pct != null
-        ? `Downloading model — ${pct}% (${fmtBytes(loaded)} / ${fmtBytes(total)})`
-        : `Downloading model — ${fmtBytes(loaded)}`
+        ? `${verb} — ${pct}% (${fmtBytes(loaded)} / ${fmtBytes(total)})`
+        : `${verb} — ${fmtBytes(loaded)}`
   }
 
   function renderModelState(): void {
