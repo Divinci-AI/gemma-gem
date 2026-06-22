@@ -150,13 +150,12 @@ export function mountChatPanel(
 
   const el = {
     launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
-    expandBtn: root.querySelector<HTMLButtonElement>('.dls-expand')!,
-    expandLabel: root.querySelector<HTMLElement>('.dls-expand-label')!,
     menuBtn: root.querySelector<HTMLButtonElement>('.dls-menu-btn')!,
     menu: root.querySelector<HTMLElement>('.dls-menu')!,
     modeOverlay: root.querySelector<HTMLButtonElement>('.dls-mode-overlay')!,
     modeDock: root.querySelector<HTMLButtonElement>('.dls-mode-dock')!,
     modePopout: root.querySelector<HTMLButtonElement>('.dls-mode-popout')!,
+    modeFullscreen: root.querySelector<HTMLButtonElement>('.dls-mode-fullscreen')!,
     toolsBtn: root.querySelector<HTMLButtonElement>('.dls-tools-btn')!,
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
@@ -918,15 +917,9 @@ export function mountChatPanel(
   }
 
   // ---- Conversations (full-screen rail) -----------------------------------
-  function renderExpandLabel(): void {
-    el.expandLabel.textContent = root.classList.contains('dls-expanded')
-      ? 'Exit full screen'
-      : 'Full screen'
-  }
-
   function setExpanded(expanded: boolean, persist = true): void {
     root.classList.toggle('dls-expanded', expanded)
-    renderExpandLabel()
+    highlightModeRow() // 'Overlay' vs 'Full' highlight tracks the expanded state
     if (expanded) void renderConvList()
     if (persist) void chrome.storage.local.set({ [STORAGE_KEY_EXPANDED]: expanded })
   }
@@ -1118,7 +1111,7 @@ export function mountChatPanel(
     if (next) {
       // Refresh the menu items' live state when it opens.
       renderGlobalModeToggle()
-      renderExpandLabel()
+      highlightModeRow()
       void refreshShareLinkState()
     }
   }
@@ -1954,28 +1947,33 @@ export function mountChatPanel(
     e.stopPropagation()
     toggleMenu()
   })
-  // Full-screen toggle: apply + close the menu (it changes the whole layout).
-  el.expandBtn.addEventListener('click', () => {
-    setExpanded(!root.classList.contains('dls-expanded'))
-    toggleMenu(false)
-  })
-
-  // ---- Panel display-mode toggle row (Overlay | Dock | Pop-out) ------------
+  // ---- Panel display-mode toggle row (Overlay | Dock | Pop-out | Full) -----
   // The overlay is the content script; Dock (chrome.sidePanel) and Pop-out (a
-  // window) are panel.html opened via the SW. Each surface highlights itself.
+  // window) are panel.html opened via the SW. "Full" is the overlay expanded to
+  // fill the page, so it shares the 'overlay' surface but a distinct highlight.
   const currentSurface: PanelSurface =
     deps.surface ?? (deps.mode === 'overlay' ? 'overlay' : 'dock')
-  function highlightCurrentSurface(): void {
-    el.modeOverlay.setAttribute('aria-pressed', String(currentSurface === 'overlay'))
-    el.modeOverlay.classList.toggle('dls-mode-active', currentSurface === 'overlay')
-    el.modeDock.setAttribute('aria-pressed', String(currentSurface === 'dock'))
-    el.modeDock.classList.toggle('dls-mode-active', currentSurface === 'dock')
-    el.modePopout.setAttribute('aria-pressed', String(currentSurface === 'popout'))
-    el.modePopout.classList.toggle('dls-mode-active', currentSurface === 'popout')
+  function setPressed(btn: HTMLButtonElement, active: boolean): void {
+    btn.setAttribute('aria-pressed', String(active))
+    btn.classList.toggle('dls-mode-active', active)
   }
-  highlightCurrentSurface()
+  // Highlight the live surface. Overlay vs Full depends on the expanded state,
+  // so this is re-run from setExpanded and when the menu opens.
+  function highlightModeRow(): void {
+    const expanded = root.classList.contains('dls-expanded')
+    const onOverlay = currentSurface === 'overlay'
+    setPressed(el.modeOverlay, onOverlay && !expanded)
+    setPressed(el.modeFullscreen, onOverlay && expanded)
+    setPressed(el.modeDock, currentSurface === 'dock')
+    setPressed(el.modePopout, currentSurface === 'popout')
+  }
+  highlightModeRow()
   function requestPanelOpen(
-    type: 'internal:open-sidepanel' | 'internal:open-popout' | 'internal:open-overlay',
+    type:
+      | 'internal:open-sidepanel'
+      | 'internal:open-popout'
+      | 'internal:open-overlay'
+      | 'internal:close-sidepanel',
   ): void {
     try {
       chrome.runtime.sendMessage({ type }, () => void chrome.runtime.lastError)
@@ -1983,36 +1981,45 @@ export function mountChatPanel(
       /* extension context gone */
     }
   }
-  function switchSurface(target: PanelSurface): void {
-    if (target !== currentSurface) void chrome.storage.local.set({ [STORAGE_KEY_PANEL_MODE]: target })
+  // The four viewing options. 'fullscreen' = overlay + expanded.
+  function switchSurface(target: 'overlay' | 'fullscreen' | 'dock' | 'popout'): void {
     toggleMenu(false)
-    if (target === currentSurface) {
-      // Already here — for the overlay, just make sure it's open.
-      if (target === 'overlay' && deps.mode === 'overlay') setOpen(true)
-      return
-    }
-    if (target === 'overlay') {
+    void chrome.storage.local.set({
+      [STORAGE_KEY_PANEL_MODE]: target === 'fullscreen' ? 'overlay' : target,
+    })
+
+    if (target === 'overlay' || target === 'fullscreen') {
+      const wantExpanded = target === 'fullscreen'
       if (deps.mode === 'overlay') {
+        setExpanded(wantExpanded)
         setOpen(true)
       } else {
+        // From a panel page: open the in-page overlay (collapsed/expanded) and
+        // close the dock so it stops sharing the page's space.
+        void chrome.storage.local.set({ [STORAGE_KEY_EXPANDED]: wantExpanded })
         requestPanelOpen('internal:open-overlay')
-        if (currentSurface === 'popout') window.close()
+        requestPanelOpen('internal:close-sidepanel')
+        if (deps.surface === 'popout') window.close()
       }
       return
     }
+
     if (target === 'dock') {
       requestPanelOpen('internal:open-sidepanel')
       if (deps.mode === 'overlay') setOpen(false)
-      else if (currentSurface === 'popout') window.close()
+      else if (deps.surface === 'popout') window.close()
       return
     }
-    // target === 'popout'
+
+    // target === 'popout' — minimize every page-sharing surface (overlay + dock).
     requestPanelOpen('internal:open-popout')
+    requestPanelOpen('internal:close-sidepanel')
     if (deps.mode === 'overlay') setOpen(false)
   }
   el.modeOverlay.addEventListener('click', () => switchSurface('overlay'))
   el.modeDock.addEventListener('click', () => switchSurface('dock'))
   el.modePopout.addEventListener('click', () => switchSurface('popout'))
+  el.modeFullscreen.addEventListener('click', () => switchSurface('fullscreen'))
   // Tools panel (Skills + MCP servers).
   el.toolsBtn.addEventListener('click', () => {
     toggleMenu(false)
@@ -2127,6 +2134,12 @@ export function mountChatPanel(
     if (deps.mode === 'overlay' && STORAGE_KEY_OPEN in changes) {
       const open = changes[STORAGE_KEY_OPEN].newValue === true
       if (open !== root.classList.contains('dls-open')) setOpen(open, false)
+    }
+    // Full/Overlay chosen from the dock/pop-out flips the overlay's expanded
+    // state (overlay-only; the panel page has no expanded layout).
+    if (deps.mode === 'overlay' && STORAGE_KEY_EXPANDED in changes) {
+      const expanded = changes[STORAGE_KEY_EXPANDED].newValue === true
+      if (expanded !== root.classList.contains('dls-expanded')) setExpanded(expanded, false)
     }
   }
   chrome.storage.onChanged.addListener(storageListener)
@@ -2248,6 +2261,10 @@ const TEMPLATE = /* html */ `
                 <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M13 4h7v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4l-9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 <span class="dls-mode-btn-label">Pop-out</span>
               </button>
+              <button class="dls-mode-btn dls-mode-fullscreen" type="button" title="Full screen — overlay fills the page" aria-label="Full screen" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+                <span class="dls-mode-btn-label">Full</span>
+              </button>
             </div>
             <div class="dls-menu-sep"></div>
             <button class="dls-menu-item dls-tools-btn" type="button" role="menuitem">
@@ -2258,10 +2275,6 @@ const TEMPLATE = /* html */ `
             <button class="dls-menu-item dls-global-toggle" type="button" role="menuitem" data-state="tab" aria-pressed="false">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/></svg>
               <span class="dls-menu-label">Global chat</span>
-            </button>
-            <button class="dls-menu-item dls-expand" type="button" role="menuitem">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M9 3H4v5M15 3h5v5M9 21H4v-5M15 21h5v-5"/></svg>
-              <span class="dls-menu-label dls-expand-label">Full screen</span>
             </button>
             <div class="dls-menu-sep"></div>
             <button class="dls-menu-item dls-share-md" type="button" role="menuitem">
@@ -2544,7 +2557,7 @@ export const SIDEBAR_CSS = /* css */ `
     top: calc(100% + 6px);
     right: 0;
     z-index: 10;
-    min-width: 210px;
+    min-width: 248px;
     background: var(--dls-bg-2);
     border: 1px solid var(--dls-border);
     border-radius: 8px;

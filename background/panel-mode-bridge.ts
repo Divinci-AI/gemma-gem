@@ -23,7 +23,12 @@ export function setupPanelModeBridge(): void {
   chrome.runtime.onMessage.addListener(
     (msg: unknown, sender: chrome.runtime.MessageSender, sendResponse: (r?: unknown) => void) => {
       const type = (msg as { type?: string })?.type
-      if (type !== 'internal:open-sidepanel' && type !== 'internal:open-popout' && type !== 'internal:open-overlay') {
+      if (
+        type !== 'internal:open-sidepanel' &&
+        type !== 'internal:open-popout' &&
+        type !== 'internal:open-overlay' &&
+        type !== 'internal:close-sidepanel'
+      ) {
         return
       }
 
@@ -38,6 +43,18 @@ export function setupPanelModeBridge(): void {
           },
         )
         return true // async sendResponse
+      }
+
+      if (type === 'internal:close-sidepanel') {
+        // No-op if no dock is open on the active tab (disabling is harmless).
+        void closeSidePanel().then(
+          () => sendResponse({ ok: true }),
+          (e) => {
+            log.debug('sidePanel close failed:', e)
+            sendResponse({ ok: false, error: String(e) })
+          },
+        )
+        return true
       }
 
       if (type === 'internal:open-popout') {
@@ -67,30 +84,44 @@ export function setupPanelModeBridge(): void {
   })
 }
 
-async function openSidePanel(sender: chrome.runtime.MessageSender): Promise<void> {
-  const sidePanel = (
-    chrome as unknown as {
-      sidePanel?: { open: (o: { tabId?: number; windowId?: number }) => Promise<void> }
-    }
-  ).sidePanel
-  if (!sidePanel?.open) throw new Error('sidePanel API unavailable')
-  // Prefer the sender's tab (content-script overlay). Fall back to the active
-  // tab in the focused window (panel-page sender has no tab).
-  const tabId = sender.tab?.id
-  if (typeof tabId === 'number') {
-    await sidePanel.open({ tabId })
-    return
-  }
+interface SidePanelApi {
+  open: (o: { tabId?: number; windowId?: number }) => Promise<void>
+  setOptions: (o: { tabId: number; path?: string; enabled: boolean }) => Promise<void>
+}
+function sidePanelApi(): SidePanelApi {
+  const sp = (chrome as unknown as { sidePanel?: SidePanelApi }).sidePanel
+  if (!sp?.open) throw new Error('sidePanel API unavailable')
+  return sp
+}
+
+async function activeTabId(): Promise<number | undefined> {
   const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-  if (typeof active?.id === 'number') {
-    await sidePanel.open({ tabId: active.id })
+  return active?.id
+}
+
+async function openSidePanel(sender: chrome.runtime.MessageSender): Promise<void> {
+  const sidePanel = sidePanelApi()
+  // open() must be called synchronously after the user gesture, so do NOT await
+  // a setOptions() before it — closeSidePanel re-arms (enabled:true) on close,
+  // so the tab is always enabled by the time the Dock toggle calls open().
+  if (typeof sender.tab?.id === 'number') {
+    await sidePanel.open({ tabId: sender.tab.id })
     return
   }
-  if (typeof active?.windowId === 'number') {
-    await sidePanel.open({ windowId: active.windowId })
-    return
-  }
-  throw new Error('no target tab/window for sidePanel.open')
+  const tabId = await activeTabId()
+  if (typeof tabId !== 'number') throw new Error('no target tab for sidePanel.open')
+  await sidePanel.open({ tabId })
+}
+
+async function closeSidePanel(): Promise<void> {
+  const sidePanel = sidePanelApi()
+  const tabId = await activeTabId()
+  if (typeof tabId !== 'number') return
+  // No sidePanel.close() exists; disabling for this tab closes an open panel.
+  // Re-enable immediately so the Dock toggle can reopen it later (enabling does
+  // not auto-open — it only restores availability).
+  await sidePanel.setOptions({ tabId, enabled: false })
+  await sidePanel.setOptions({ tabId, path: 'panel.html', enabled: true })
 }
 
 async function openPopout(): Promise<void> {
