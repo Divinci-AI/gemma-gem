@@ -2217,9 +2217,11 @@ const TEMPLATE = /* html */ `
           </div>
           <p class="dls-disclaimer">
             <span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span>
-            <a class="dls-disclaimer-link" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer">Privacy</a>
-            <span class="dls-disclaimer-dot" aria-hidden="true">·</span>
-            <a class="dls-disclaimer-link" href="${TERMS_URL}" target="_blank" rel="noopener noreferrer">Terms</a>
+            <span class="dls-disclaimer-links">
+              <a class="dls-disclaimer-link" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer">Privacy</a>
+              <span class="dls-disclaimer-dot" aria-hidden="true">·</span>
+              <a class="dls-disclaimer-link" href="${TERMS_URL}" target="_blank" rel="noopener noreferrer">Terms</a>
+            </span>
           </p>
         </footer>
       </div>
@@ -2932,6 +2934,10 @@ const SIDEBAR_CSS = /* css */ `
   }
   .dls-disclaimer-link:hover { color: var(--dls-text); }
   .dls-disclaimer-dot { margin: 0 4px; opacity: 0.6; }
+  /* Keep Privacy · Terms on their own line beneath the status text so a longer
+     status (e.g. "This page is sensitive…") doesn't push the links into an
+     awkward wrap. */
+  .dls-disclaimer-links { display: block; margin-top: 2px; }
   .dls-input {
     flex: 1;
     resize: none;
