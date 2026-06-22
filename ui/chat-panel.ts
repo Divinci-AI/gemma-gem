@@ -1809,6 +1809,10 @@ export function mountChatPanel(
       lastCheckedUrl = ''
       checkPageStatus()
       setTimeout(() => el.input.focus(), 60)
+      // Mutual exclusion: the overlay and the dock both share the page's space,
+      // so opening the overlay (launcher or toggle row) closes the dock. Only on
+      // user-initiated opens (persist) — not init/cross-tab sync.
+      if (deps.mode === 'overlay' && persist) requestPanelOpen('internal:close-sidepanel')
     } else {
       stopPolling()
     }

@@ -6,6 +6,7 @@
  * script, so account/local chat behave identically to the overlay.
  */
 import { mountChatPanel, SIDEBAR_CSS } from '@/ui/chat-panel'
+import { STORAGE_KEY_OPEN } from '@/shared/models'
 
 // Extension page → no shadow root, so inject the panel CSS into the document.
 const style = document.createElement('style')
@@ -16,5 +17,10 @@ document.head.appendChild(style)
 // the side-panel dock loads panel.html with no param. This drives the
 // hamburger toggle-row highlight so each surface marks itself active.
 const surface = new URLSearchParams(location.search).get('surface') === 'popout' ? 'popout' : 'dock'
+
+// The dock shares the page's space with the in-page overlay, so opening the
+// dock (via the toggle row OR Chrome's native side-panel icon) closes the
+// overlay. The pop-out is a separate window and doesn't conflict, so skip it.
+if (surface === 'dock') void chrome.storage.local.set({ [STORAGE_KEY_OPEN]: false })
 
 mountChatPanel(document.body, { mode: 'panel', surface })
