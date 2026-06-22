@@ -3083,7 +3083,7 @@ export const SIDEBAR_CSS = /* css */ `
     flex-direction: column;
     gap: 6px;
     padding: 10px 12px;
-    border-top: 1px solid var(--dls-border);
+    /* No top border — the through-text hairline on .dls-safety is the divider. */
   }
   .dls-compose-row { display: flex; gap: 8px; align-items: flex-end; }
   .dls-compose-row .dls-input { flex: 1; }
