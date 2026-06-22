@@ -2020,7 +2020,15 @@ export function mountChatPanel(
       return
     }
 
-    // target === 'popout' — minimize every page-sharing surface (overlay + dock).
+    // target === 'popout'
+    if (deps.surface === 'popout') {
+      // Clicking Pop-out from within the pop-out toggles it off: re-open the
+      // in-page overlay on the active tab, then close this window.
+      requestPanelOpen('internal:open-overlay')
+      window.close()
+      return
+    }
+    // Opening the pop-out — minimize every page-sharing surface (overlay + dock).
     requestPanelOpen('internal:open-popout')
     requestPanelOpen('internal:close-sidepanel')
     if (deps.mode === 'overlay') setOpen(false)
