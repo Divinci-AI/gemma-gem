@@ -1957,6 +1957,11 @@ function mountSidebar(
     if (el.shareLink.disabled) return
     void shareDivinciLink()
   })
+  // Privacy / Terms open in a new tab (target=_blank); close the menu on click
+  // since the click-outside handler below won't fire for in-menu elements.
+  root.querySelectorAll<HTMLAnchorElement>('.dls-menu-extlink').forEach((a) =>
+    a.addEventListener('click', () => toggleMenu(false)),
+  )
   // Close the menu on any click outside it.
   root.addEventListener('click', (e) => {
     if (!el.menu.hidden && !el.menuBtn.contains(e.target as Node) && !el.menu.contains(e.target as Node)) {
@@ -2177,6 +2182,15 @@ const TEMPLATE = /* html */ `
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"/></svg>
               <span class="dls-menu-label">Copy Divinci link</span>
             </button>
+            <div class="dls-menu-sep"></div>
+            <a class="dls-menu-item dls-menu-extlink" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>
+              <span class="dls-menu-label">Privacy</span>
+            </a>
+            <a class="dls-menu-item dls-menu-extlink" href="${TERMS_URL}" target="_blank" rel="noopener noreferrer" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M7 3h7l4 4v14H7zM14 3v4h4M9 13h6M9 17h6"/></svg>
+              <span class="dls-menu-label">Terms</span>
+            </a>
           </div>
         </div>
         <button class="dls-close" aria-label="Close">×</button>
@@ -2217,11 +2231,6 @@ const TEMPLATE = /* html */ `
           </div>
           <p class="dls-disclaimer">
             <span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span>
-            <span class="dls-disclaimer-links">
-              <a class="dls-disclaimer-link" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer">Privacy</a>
-              <span class="dls-disclaimer-dot" aria-hidden="true">·</span>
-              <a class="dls-disclaimer-link" href="${TERMS_URL}" target="_blank" rel="noopener noreferrer">Terms</a>
-            </span>
           </p>
         </footer>
       </div>
@@ -2452,6 +2461,7 @@ const SIDEBAR_CSS = /* css */ `
     background: transparent;
     color: var(--dls-text);
     cursor: pointer;
+    text-decoration: none; /* for <a> menu items (Privacy / Terms) */
   }
   .dls-menu-item svg { flex-shrink: 0; color: var(--dls-muted); }
   .dls-menu-item:hover:not(:disabled) { background: var(--dls-bg); }
@@ -2927,17 +2937,7 @@ const SIDEBAR_CSS = /* css */ `
     color: var(--dls-muted);
     text-align: center;
   }
-  .dls-disclaimer-link {
-    color: var(--dls-muted);
-    text-decoration: underline;
-    text-underline-offset: 2px;
-  }
-  .dls-disclaimer-link:hover { color: var(--dls-text); }
-  .dls-disclaimer-dot { margin: 0 4px; opacity: 0.6; }
-  /* Keep Privacy · Terms on their own line beneath the status text so a longer
-     status (e.g. "This page is sensitive…") doesn't push the links into an
-     awkward wrap. */
-  .dls-disclaimer-links { display: block; margin-top: 2px; }
+  /* Privacy / Terms moved into the hamburger menu; footer is status text only. */
   .dls-input {
     flex: 1;
     resize: none;
