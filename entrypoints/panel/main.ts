@@ -12,4 +12,9 @@ const style = document.createElement('style')
 style.textContent = SIDEBAR_CSS
 document.head.appendChild(style)
 
-mountChatPanel(document.body, { mode: 'panel' })
+// The pop-out window is opened with ?surface=popout (see panel-mode-bridge);
+// the side-panel dock loads panel.html with no param. This drives the
+// hamburger toggle-row highlight so each surface marks itself active.
+const surface = new URLSearchParams(location.search).get('surface') === 'popout' ? 'popout' : 'dock'
+
+mountChatPanel(document.body, { mode: 'panel', surface })

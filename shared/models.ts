@@ -47,6 +47,15 @@ export const MODELS: Record<ModelId, ModelConfig> = {
 export const DEFAULT_MODEL_ID: ModelId = 'gemma-4-e2b'
 export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
 export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
+// Whether the in-page overlay sidebar is open. Shared so the SW can flip it
+// (the "Overlay" panel-mode toggle from the dock/pop-out re-opens the overlay
+// on the active tab via the existing cross-tab storage sync).
+export const STORAGE_KEY_OPEN = 'divinci_sidebar_open'
+// The user's last-chosen panel surface — drives the hamburger toggle-row
+// highlight. 'overlay' = in-page sidebar, 'dock' = chrome.sidePanel,
+// 'popout' = standalone window.
+export const STORAGE_KEY_PANEL_MODE = 'divinci_panel_mode'
+export type PanelSurface = 'overlay' | 'dock' | 'popout'
 // Auto-warm crash-loop guard. The SW auto-warms the remembered model on every
 // startup (incl. the ~30s eviction cycle); if a WebGPU/ONNX load hard-crashes
 // the renderer or SW, that turns into a reload→warm→crash→reload loop (the

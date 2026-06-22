@@ -22,6 +22,7 @@ import { setupWwwRagBridge } from '@/background/www-rag-bridge'
 import { setupDivinciAuthBridge } from '@/background/divinci-auth'
 import { setupTabSessionBridge } from '@/background/tab-session-bridge'
 import { setupDivinciApiProxy } from '@/background/divinci-api-proxy'
+import { setupPanelModeBridge } from '@/background/panel-mode-bridge'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
@@ -211,6 +212,7 @@ export default defineBackground(() => {
   setupDivinciAuthBridge()
   setupTabSessionBridge()
   setupDivinciApiProxy()
+  setupPanelModeBridge()
   setupSettingsPersistence()
   setupWarmStateTracking()
 

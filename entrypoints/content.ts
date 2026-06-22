@@ -35,6 +35,7 @@ export default defineContentScript({
       onMount: (container) =>
         mountChatPanel(container, {
           mode: 'overlay',
+          surface: 'overlay',
           onInvalidated: ctx.onInvalidated,
           host: {
             // Raw visible text of the page (the panel normalizes + caps it).

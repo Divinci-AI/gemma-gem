@@ -33,10 +33,13 @@ import {
   STORAGE_KEY_TAB_ACTIVE,
   STORAGE_KEY_GLOBAL_CHAT_MODE,
   STORAGE_KEY_SETTINGS,
+  STORAGE_KEY_OPEN,
+  STORAGE_KEY_PANEL_MODE,
   PRIVACY_POLICY_URL,
   TERMS_URL,
   type ModelId,
   type UserSettings,
+  type PanelSurface,
 } from '@/shared/models'
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import { urlIndexDecision } from '@/shared/url-policy'
@@ -64,7 +67,6 @@ import type {
 } from '@/shared/messages'
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
-const STORAGE_KEY_OPEN = 'divinci_sidebar_open'
 const STORAGE_KEY_EXPANDED = 'divinci_sidebar_expanded'
 const STORAGE_KEY_ACTIVE_CONV = 'divinci_active_conversation'
 const STORAGE_KEY_PANEL_WIDTH = 'divinci_sidebar_width'
@@ -112,6 +114,13 @@ export interface MountedSidebar {
  */
 export interface ChatPanelDeps {
   mode: 'overlay' | 'panel'
+  /**
+   * Which of the three surfaces this mount currently is, for the hamburger
+   * toggle-row highlight. Overlay → 'overlay'; panel page → 'dock' (side panel)
+   * or 'popout' (window), distinguished by the panel page's ?surface= param.
+   * Defaults from `mode` ('overlay' → overlay, 'panel' → dock).
+   */
+  surface?: PanelSurface
   /** Content-script lifecycle hook; absent on extension pages. */
   onInvalidated?: (cb: () => void) => void
   /** Host-page integration (overlay only). Absent → page reading/grounding off. */
@@ -145,6 +154,9 @@ export function mountChatPanel(
     expandLabel: root.querySelector<HTMLElement>('.dls-expand-label')!,
     menuBtn: root.querySelector<HTMLButtonElement>('.dls-menu-btn')!,
     menu: root.querySelector<HTMLElement>('.dls-menu')!,
+    modeOverlay: root.querySelector<HTMLButtonElement>('.dls-mode-overlay')!,
+    modeDock: root.querySelector<HTMLButtonElement>('.dls-mode-dock')!,
+    modePopout: root.querySelector<HTMLButtonElement>('.dls-mode-popout')!,
     toolsBtn: root.querySelector<HTMLButtonElement>('.dls-tools-btn')!,
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
@@ -1947,6 +1959,60 @@ export function mountChatPanel(
     setExpanded(!root.classList.contains('dls-expanded'))
     toggleMenu(false)
   })
+
+  // ---- Panel display-mode toggle row (Overlay | Dock | Pop-out) ------------
+  // The overlay is the content script; Dock (chrome.sidePanel) and Pop-out (a
+  // window) are panel.html opened via the SW. Each surface highlights itself.
+  const currentSurface: PanelSurface =
+    deps.surface ?? (deps.mode === 'overlay' ? 'overlay' : 'dock')
+  function highlightCurrentSurface(): void {
+    el.modeOverlay.setAttribute('aria-pressed', String(currentSurface === 'overlay'))
+    el.modeOverlay.classList.toggle('dls-mode-active', currentSurface === 'overlay')
+    el.modeDock.setAttribute('aria-pressed', String(currentSurface === 'dock'))
+    el.modeDock.classList.toggle('dls-mode-active', currentSurface === 'dock')
+    el.modePopout.setAttribute('aria-pressed', String(currentSurface === 'popout'))
+    el.modePopout.classList.toggle('dls-mode-active', currentSurface === 'popout')
+  }
+  highlightCurrentSurface()
+  function requestPanelOpen(
+    type: 'internal:open-sidepanel' | 'internal:open-popout' | 'internal:open-overlay',
+  ): void {
+    try {
+      chrome.runtime.sendMessage({ type }, () => void chrome.runtime.lastError)
+    } catch {
+      /* extension context gone */
+    }
+  }
+  function switchSurface(target: PanelSurface): void {
+    if (target !== currentSurface) void chrome.storage.local.set({ [STORAGE_KEY_PANEL_MODE]: target })
+    toggleMenu(false)
+    if (target === currentSurface) {
+      // Already here — for the overlay, just make sure it's open.
+      if (target === 'overlay' && deps.mode === 'overlay') setOpen(true)
+      return
+    }
+    if (target === 'overlay') {
+      if (deps.mode === 'overlay') {
+        setOpen(true)
+      } else {
+        requestPanelOpen('internal:open-overlay')
+        if (currentSurface === 'popout') window.close()
+      }
+      return
+    }
+    if (target === 'dock') {
+      requestPanelOpen('internal:open-sidepanel')
+      if (deps.mode === 'overlay') setOpen(false)
+      else if (currentSurface === 'popout') window.close()
+      return
+    }
+    // target === 'popout'
+    requestPanelOpen('internal:open-popout')
+    if (deps.mode === 'overlay') setOpen(false)
+  }
+  el.modeOverlay.addEventListener('click', () => switchSurface('overlay'))
+  el.modeDock.addEventListener('click', () => switchSurface('dock'))
+  el.modePopout.addEventListener('click', () => switchSurface('popout'))
   // Tools panel (Skills + MCP servers).
   el.toolsBtn.addEventListener('click', () => {
     toggleMenu(false)
@@ -2169,6 +2235,21 @@ const TEMPLATE = /* html */ `
             </svg>
           </button>
           <div class="dls-menu" hidden role="menu">
+            <div class="dls-menu-modes" role="group" aria-label="Panel display mode">
+              <button class="dls-mode-btn dls-mode-overlay" type="button" title="Overlay — slides over the page" aria-label="Overlay" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><rect x="13" y="7" width="7" height="11" rx="1" fill="currentColor"/></svg>
+                <span class="dls-mode-btn-label">Overlay</span>
+              </button>
+              <button class="dls-mode-btn dls-mode-dock" type="button" title="Dock — browser side panel" aria-label="Dock" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 5v14" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+                <span class="dls-mode-btn-label">Dock</span>
+              </button>
+              <button class="dls-mode-btn dls-mode-popout" type="button" title="Pop-out — separate window" aria-label="Pop-out" aria-pressed="false">
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M13 4h7v7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 4l-9 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <span class="dls-mode-btn-label">Pop-out</span>
+              </button>
+            </div>
+            <div class="dls-menu-sep"></div>
             <button class="dls-menu-item dls-tools-btn" type="button" role="menuitem">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17v3h3l5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z"/></svg>
               <span class="dls-menu-label">Tools (Skills &amp; MCP)</span>
@@ -2495,6 +2576,36 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-menu-item:disabled { color: var(--dls-muted); cursor: default; }
   .dls-menu-item.dls-global-toggle[data-state="global"] svg { color: var(--dls-accent); }
   .dls-menu-sep { height: 1px; background: var(--dls-border); margin: 4px 2px; }
+
+  /* Panel display-mode toggle row: three equal icon+label buttons. The active
+     surface is highlighted (accent border/tint); the others are pickable. */
+  .dls-menu-modes { display: flex; gap: 4px; padding: 2px; }
+  .dls-mode-btn {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 4px 6px;
+    border: 1px solid var(--dls-border);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--dls-muted);
+    font-family: inherit;
+    font-size: 10px;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  }
+  .dls-mode-btn svg { color: var(--dls-muted); }
+  .dls-mode-btn:hover { background: var(--dls-bg); color: var(--dls-text); border-color: var(--dls-muted); }
+  .dls-mode-btn:hover svg { color: var(--dls-text); }
+  .dls-mode-btn.dls-mode-active {
+    color: var(--dls-accent);
+    border-color: var(--dls-accent);
+    background: color-mix(in srgb, var(--dls-accent) 12%, transparent);
+  }
+  .dls-mode-btn.dls-mode-active svg { color: var(--dls-accent); }
+  .dls-mode-btn-label { line-height: 1; }
 
   /* Tools panel overlay (Skills | MCP servers) — covers the panel. */
   .dls-tools-overlay {
