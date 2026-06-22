@@ -65,7 +65,7 @@ export default defineConfig({
     // (extension-global, reachable from the content script + SW; a content
     // script's IndexedDB is the host page's origin, which would silo history
     // per website). Removes the storage quota for long histories.
-    permissions: ['offscreen', 'storage', 'identity', 'unlimitedStorage'],
+    permissions: ['offscreen', 'storage', 'identity', 'unlimitedStorage', 'sidePanel'],
     host_permissions: API_HOSTS.map((h) => `${h}/*`),
     // Keep this list in lockstep with shared/models.ts ALLOWED_WEB_APP_ORIGINS.
     // The bridge enforces the same list at runtime as defense-in-depth.
@@ -90,6 +90,13 @@ export default defineConfig({
     action: {
       default_title: 'Divinci Local Inference',
       default_popup: 'popup.html',
+    },
+    // Browser side-panel dock. WXT auto-detects entrypoints/panel/index.html and
+    // emits panel.html. Opened on demand (Phase 4 hamburger "Dock" toggle →
+    // chrome.sidePanel.open) or via Chrome's own side-panel picker. Not set to
+    // open-on-action-click — the toolbar icon keeps opening the popup.
+    side_panel: {
+      default_path: 'panel.html',
     },
   },
   vite: () => ({

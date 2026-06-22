@@ -2227,11 +2227,11 @@ const TEMPLATE = /* html */ `
         </div>
 
         <div class="dls-messages">
-          <p class="dls-empty"><span class="dls-empty-title">Ask Gemma 4 anything</span>It runs entirely on your GPU, on any page.</p>
+          <p class="dls-empty"><span class="dls-empty-title">Ask Gemma 4 anything</span><span class="dls-empty-sub">It runs entirely on your GPU, on any page.</span><span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span></p>
         </div>
 
         <footer class="dls-footer">
-          <p class="dls-safety">AI can make mistakes — verify important information.</p>
+          <p class="dls-safety"><span>AI can make mistakes — verify important information.</span></p>
           <div class="dls-compose-row">
             <textarea class="dls-input" rows="1" placeholder="Load the model to start chatting" disabled></textarea>
             <button class="dls-mic" type="button" aria-label="Dictate (speech to text)" title="Dictate" hidden>
@@ -2242,9 +2242,6 @@ const TEMPLATE = /* html */ `
             </button>
             <button class="dls-send" data-mode="send" disabled>Send</button>
           </div>
-          <p class="dls-disclaimer">
-            <span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span>
-          </p>
         </footer>
       </div>
     </div>
@@ -2330,6 +2327,22 @@ export const SIDEBAR_CSS = /* css */ `
     transition: transform 0.25s ease;
   }
   .dls-root.dls-open .dls-panel { transform: translateX(0); }
+
+  /* ---- Panel mode: standalone side-panel dock / pop-out window ----------
+     The panel IS the whole page, so fill it and drop the overlay chrome
+     (no floating launcher, no resize grip, no fixed/translateX positioning). */
+  .dls-mode-panel.dls-root { width: 100%; height: 100%; }
+  .dls-mode-panel .dls-launcher,
+  .dls-mode-panel .dls-resize { display: none; }
+  .dls-mode-panel .dls-panel {
+    position: static;
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    transform: none;
+    border-left: none;
+    box-shadow: none;
+  }
 
   /* Drag-to-resize grip on the docked panel's left edge. Hidden in full-screen
      expanded mode (panel fills the viewport). */
@@ -2749,6 +2762,10 @@ export const SIDEBAR_CSS = /* css */ `
   }
   .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; }
   .dls-empty-title { display: block; font-size: 15px; font-weight: 600; color: var(--dls-text); margin-bottom: 3px; }
+  .dls-empty-sub { display: block; }
+  /* Page-reading note now lives under the empty-state subtitle (dynamic via
+     renderDisclaimer); only shown on a fresh thread. */
+  .dls-empty .dls-disclaimer-text { display: block; margin-top: 10px; font-size: 12px; opacity: 0.85; }
 
   /* Message row = avatar + bubble, bottom-aligned so the avatar sits in the
      bottom corner of the bubble. */
@@ -2891,12 +2908,28 @@ export const SIDEBAR_CSS = /* css */ `
 
   /* AI-safety disclaimer — always visible above the page-reading note. */
   .dls-safety {
+    position: relative;
     margin: 0;
     font-size: 10px;
     line-height: 1.4;
     color: var(--dls-muted);
     text-align: center;
     opacity: 0.85;
+  }
+  /* Hairline divider running through the middle; the text sits on top with the
+     panel background so the line only shows to its left and right. */
+  .dls-safety::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    right: 0;
+    border-top: 1px solid var(--dls-border);
+  }
+  .dls-safety span {
+    position: relative;
+    background: var(--dls-bg);
+    padding: 0 12px;
   }
 
   /* Rendered-Markdown assistant bubbles (block elements handle their own
