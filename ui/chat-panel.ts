@@ -35,6 +35,7 @@ import {
   STORAGE_KEY_SETTINGS,
   STORAGE_KEY_OPEN,
   STORAGE_KEY_PANEL_MODE,
+  STORAGE_KEY_MODEL,
   PRIVACY_POLICY_URL,
   TERMS_URL,
   type ModelId,
@@ -792,6 +793,11 @@ export function mountChatPanel(
   function loadModel(): void {
     isLoading = true
     renderModelState()
+    // Remember the chosen model so the SW's auto-warm reloads it (from the disk
+    // cache, no re-download) after a refresh / SW eviction tears down the
+    // offscreen. Previously only the toolbar popup persisted this, so loading
+    // via the overlay left the model un-remembered → Load card after refresh.
+    void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
     send({ type: 'divinci:load', requestId: newRequestId(), modelId: MODEL_ID })
   }
 
