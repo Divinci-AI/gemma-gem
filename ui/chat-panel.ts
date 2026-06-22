@@ -1989,8 +1989,13 @@ export function mountChatPanel(
     })
 
     if (target === 'overlay' || target === 'fullscreen') {
-      const wantExpanded = target === 'fullscreen'
+      let wantExpanded = target === 'fullscreen'
       if (deps.mode === 'overlay') {
+        // "Full" toggles: clicking it while already full-screen shrinks back to
+        // the normal overlay (the active button is the obvious thing to click).
+        if (target === 'fullscreen' && root.classList.contains('dls-expanded')) {
+          wantExpanded = false
+        }
         setExpanded(wantExpanded)
         setOpen(true)
       } else {
