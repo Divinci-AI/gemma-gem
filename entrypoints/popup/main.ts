@@ -25,6 +25,8 @@ const els = {
   statusQueue: document.getElementById('status-queue')!,
   statusDisk: document.getElementById('status-disk')!,
   clearCacheBtn: document.getElementById('clear-cache-btn') as HTMLButtonElement,
+  statusWake: document.getElementById('status-wake')!,
+  wakeToggleBtn: document.getElementById('wake-toggle-btn') as HTMLButtonElement,
   statusProgress: document.getElementById('status-progress')!,
   progressFile: document.getElementById('progress-file')!,
   progressPct: document.getElementById('progress-pct')!,
@@ -567,6 +569,49 @@ els.clearCacheBtn.addEventListener('click', async () => {
   }, 1500)
 })
 
+// ---- Wake word (Phase B0: hands-free "Hey Jarvis") ---------------------
+// Mic permission is granted HERE (popup has UI + a user gesture); the offscreen
+// doc that runs the always-on loop can't prompt. Detection happens fully
+// on-device. State persists so the toggle reflects reality across popup opens.
+const STORAGE_KEY_WAKE = 'divinci-wake-enabled'
+
+function renderWake(on: boolean): void {
+  els.statusWake.textContent = on ? 'On' : 'Off'
+  els.wakeToggleBtn.textContent = on ? 'Disable' : 'Enable'
+}
+
+async function loadWake(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_WAKE)
+  renderWake(stored[STORAGE_KEY_WAKE] === true)
+}
+
+els.wakeToggleBtn.addEventListener('click', async () => {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_WAKE)
+  const currentlyOn = stored[STORAGE_KEY_WAKE] === true
+  els.wakeToggleBtn.disabled = true
+  try {
+    if (!currentlyOn) {
+      try {
+        const s = await navigator.mediaDevices.getUserMedia({ audio: true })
+        s.getTracks().forEach((t) => t.stop())
+      } catch {
+        els.errorText.textContent = 'Microphone permission is required for the wake word.'
+        els.errorToast.hidden = false
+        return
+      }
+      await chrome.storage.local.set({ [STORAGE_KEY_WAKE]: true })
+      chrome.runtime.sendMessage({ type: 'internal:wake-enable' })
+      renderWake(true)
+    } else {
+      await chrome.storage.local.set({ [STORAGE_KEY_WAKE]: false })
+      chrome.runtime.sendMessage({ type: 'internal:wake-disable' })
+      renderWake(false)
+    }
+  } finally {
+    els.wakeToggleBtn.disabled = false
+  }
+})
+
 // ---- Theme (system / light / dark) -------------------------------------
 type ThemeMode = 'system' | 'light' | 'dark'
 
@@ -613,6 +658,7 @@ void loadAccountSettings()
 void loadPrivacySettings()
 void loadTheme()
 void loadShowHandle()
+void loadWake()
 void refreshAuthStatus()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are

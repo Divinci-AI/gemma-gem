@@ -53,6 +53,13 @@
           <button id="clear-cache-btn" class="inline-action" hidden title="Delete cached model files. Future loads will re-download.">Clear</button>
         </span>
       </div>
+      <div class="status-row">
+        <span class="status-label" title="Say &quot;Hey Jarvis&quot; to open Divinci hands-free (experimental). Listens locally on your device.">Wake word <span style="opacity:.6">(beta)</span></span>
+        <span class="status-trailing">
+          <span class="status-value" id="status-wake">Off</span>
+          <button id="wake-toggle-btn" class="inline-action" title="Enable hands-free wake word. Grants microphone access; listening happens entirely on-device.">Enable</button>
+        </span>
+      </div>
       <div id="status-progress" class="status-progress" hidden>
         <div class="progress-label">
           <span id="progress-file">—</span>

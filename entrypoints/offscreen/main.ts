@@ -11,6 +11,7 @@
  */
 
 import { ChatHost } from '@/offscreen/chat-host'
+import { startWakeWord, stopWakeWord } from '@/offscreen/wake-host'
 import {
   computeCacheBreakdown,
   emptyBreakdown,
@@ -394,6 +395,17 @@ chrome.runtime.onMessage.addListener(
       log.info('User settings updated:', redactSettings(userSettings))
       break
     }
+  }
+})
+
+// Wake-word (Phase B0) — isolated listener so the typed InternalRequest union
+// above stays untouched. The popup grants mic permission (offscreen can't
+// prompt) then sends enable; detection opens the Divinci panel.
+chrome.runtime.onMessage.addListener((message: { type?: string }) => {
+  if (message?.type === 'internal:wake-enable') {
+    void startWakeWord().catch((e) => log.error('[wake] enable failed:', e))
+  } else if (message?.type === 'internal:wake-disable') {
+    void stopWakeWord().catch((e) => log.error('[wake] disable failed:', e))
   }
 })
 

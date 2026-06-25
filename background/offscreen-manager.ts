@@ -17,8 +17,10 @@ export async function ensureOffscreenDocument(): Promise<void> {
 
   creating = chrome.offscreen.createDocument({
     url: OFFSCREEN_URL,
-    reasons: [chrome.offscreen.Reason.WORKERS],
-    justification: 'Run Gemma 4 model inference via WebGPU',
+    // WORKERS = WebGPU Gemma inference; USER_MEDIA = mic capture for the
+    // wake-word loop (Phase B0). Mic permission is granted in the popup first.
+    reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.USER_MEDIA],
+    justification: 'Run Gemma 4 inference (WebGPU) and wake-word detection (mic)',
   })
 
   try {
