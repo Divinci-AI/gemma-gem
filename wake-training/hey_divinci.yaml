@@ -1,0 +1,61 @@
+# openWakeWord training config — "Hey Divinci" custom wake word (Phase B1).
+# Based on openWakeWord/examples/custom_model.yml. Produces a ~200KB ONNX head
+# with input shape [1, 16, 96] — exactly what shared/wake/wake-engine.ts expects
+# (windowSize 16 embeddings × 96 dims), so the trained model drops straight in.
+#
+# Run via openWakeWord's notebooks/automatic_model_training.ipynb (Colab, GPU) or
+# a Linux+CUDA box. See ./README.md for the full runbook.
+
+model_name: "hey_divinci"
+
+# Piper TTS can mispronounce "Divinci" (da-VIN-chee). Include close pronunciation
+# variants so synthetic positives cover how people actually say it. After the
+# first sample-gen step, LISTEN to a few generated clips and prune/extend these.
+target_phrase:
+  - "hey divinci"
+  - "hey da vinci"
+  - "hey davinchi"
+
+# Optional hard negatives — near-misses we must NOT wake on. Add real confusables
+# once observed (e.g. "hey vinny", "da vinci", "hey sydney").
+custom_negative_phrases:
+  - "da vinci"
+  - "divinci"
+  - "hey vinny"
+
+# Synthetic sample counts (defaults are a good first pass; raise for accuracy).
+n_samples: 10000
+n_samples_val: 2000
+tts_batch_size: 50
+augmentation_batch_size: 16
+
+piper_sample_generator_path: "./piper-sample-generator"
+output_dir: "./hey_divinci_model"
+
+# Augmentation data (the notebook downloads these). RIR = room impulse responses;
+# background = noise mixed into positives so it's robust outside a quiet room.
+rir_paths:
+  - "./mit_rirs"
+background_paths:
+  - "./background_clips"
+background_paths_duplication_rate:
+  - 1
+false_positive_validation_data_path: "./validation_set_features.npy"
+augmentation_rounds: 1
+
+feature_data_files:
+  "ACAV100M_sample": "./openwakeword_features_ACAV100M_2000_hrs_16bit.npy"
+batch_n_per_class:
+  "ACAV100M_sample": 1024
+  "adversarial_negative": 50
+  "positive": 50
+
+model_type: "dnn"
+layer_size: 32
+steps: 50000
+max_negative_weight: 1500
+
+# A wake word should rarely false-fire. 0.2/hr is conservative; if "Hey Divinci"
+# is too hard to trigger, retrain at 0.5–1.0 or lower the runtime threshold first
+# (DEFAULT_WAKE_CONFIG.detectionThreshold in shared/wake/wake-engine.ts).
+target_false_positives_per_hour: 0.2

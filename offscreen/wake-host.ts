@@ -14,12 +14,33 @@ import {
   WakeWordEngine,
   type WakeDetection,
   type InferenceSessionLike,
+  type WakeKeywordSpec,
 } from "@/shared/wake/wake-engine";
 import { wakeWorkletUrl } from "@/shared/wake/worklet-source";
 import { log } from "@/shared/logger";
 
 const MODELS_BASE = "/models/wake";
-const STOCK_KEYWORD = { name: "hey_jarvis", model: `${MODELS_BASE}/hey_jarvis_v0.1.onnx` };
+// Prefer the custom "Hey Divinci" head once B1 training lands it here; until then
+// fall back to the bundled stock "hey_jarvis" (B0). So B1 is a pure drop-in:
+// add public/models/wake/hey_divinci.onnx + rebuild — no code change needed.
+const KEYWORD_CANDIDATES: WakeKeywordSpec[] = [
+  { name: "hey_divinci", model: `${MODELS_BASE}/hey_divinci.onnx` },
+  { name: "hey_jarvis", model: `${MODELS_BASE}/hey_jarvis_v0.1.onnx` },
+];
+
+/** First candidate whose model is actually bundled; falls back to the last (the
+ * always-present stock head). Bundled assets 404 cleanly when absent. */
+async function resolveKeyword(): Promise<WakeKeywordSpec> {
+  for (const c of KEYWORD_CANDIDATES.slice(0, -1)) {
+    try {
+      const r = await fetch(c.model, { method: "GET" });
+      if (r.ok) return c;
+    } catch {
+      /* not present — try next */
+    }
+  }
+  return KEYWORD_CANDIDATES[KEYWORD_CANDIDATES.length - 1];
+}
 
 let running = false;
 let audioContext: AudioContext | null = null;
@@ -55,6 +76,8 @@ export async function startWakeWord(): Promise<void> {
     },
   });
 
+  const keyword = await resolveKeyword();
+  log.info("[wake] keyword head:", keyword.name);
   await engine.load(
     // ort's InferenceSession is structurally compatible with our minimal
     // InferenceSessionLike (run/inputNames/outputNames); cast at the boundary.
@@ -63,7 +86,7 @@ export async function startWakeWord(): Promise<void> {
         executionProviders: ["wasm"],
       })) as unknown as InferenceSessionLike,
     { melspectrogram: `${MODELS_BASE}/melspectrogram.onnx`, embedding: `${MODELS_BASE}/embedding_model.onnx` },
-    [STOCK_KEYWORD],
+    [keyword],
   );
 
   stream = await navigator.mediaDevices.getUserMedia({
@@ -84,7 +107,7 @@ export async function startWakeWord(): Promise<void> {
   node.connect(audioContext.destination);
 
   running = true;
-  log.info("[wake] started (hey_jarvis, B0)");
+  log.info("[wake] started:", keyword.name);
 }
 
 export async function stopWakeWord(): Promise<void> {
