@@ -8,8 +8,11 @@ is bit-rotted against all of these. Proven to reach training end-to-end; the onl
 reason it wasn't finished live was the FREE Colab runtime idle-preempting.
 
 HOW TO RUN (reliably):
-  - Use Colab Pro OR keep the Colab tab FOREGROUNDED the whole time (free runtimes
-    idle-preempt when the tab is backgrounded, which wipes everything mid-run).
+  - USE A NON-PREEMPTIBLE GPU: Colab Pro, or Kaggle Notebooks (free 30h/wk GPU),
+    or any Linux+CUDA box. FREE Colab idle-preempted and wiped this mid-training
+    TWICE — and driving it from an automated/remote browser tab does NOT count as
+    "active" to Colab, so the free tier recycles it regardless. Run it yourself in
+    a normal foregrounded tab on Pro, or on Kaggle/a VM.
   - New notebook → Runtime ▸ Change runtime type ▸ T4 GPU.
   - Paste this whole file into ONE cell and run it (or: upload + `!python train_hey_divinci_colab.py`).
   - It's idempotent: if the runtime resets, just re-run — finished stages are skipped.
@@ -47,28 +50,21 @@ if not os.path.exists("openwakeword"):
     sh("git clone -q https://github.com/dscripka/openwakeword")
 
 sh("apt-get -qq install -y espeak-ng >/dev/null 2>&1")
-if not have("openwakeword"):
-    sh(f"{sys.executable} -m pip install -q -e ./openwakeword")
-if not have("piper_sample_generator"):
-    # Editable install of the clone (provides piper-tts 1.3 + the package).
-    sh(f"{sys.executable} -m pip install -q -e ./piper-sample-generator")
-for mod, pip in [("mutagen","mutagen==1.47.0"),("torchinfo","torchinfo==1.8.0"),
-                 ("torchmetrics","torchmetrics==1.2.0"),("speechbrain","speechbrain==0.5.14"),
-                 ("audiomentations","audiomentations==0.33.0"),
-                 ("torch_audiomentations","torch-audiomentations==0.11.0"),
-                 ("acoustics","acoustics==0.2.6"),("pronouncing","pronouncing==0.2.0"),
-                 ("datasets","datasets==2.14.6"),("dp","deep-phonemizer==0.0.19")]:
-    # torch_audiomentations can't import until torchaudio is patched (below); check by path.
-    if mod == "torch_audiomentations":
-        try:
-            import torch_audiomentations  # noqa
-        except AttributeError:
-            pass  # installed but torchaudio-incompat — patched next
-        except ModuleNotFoundError:
-            sh(f"{sys.executable} -m pip install -q {pip}")
-        continue
-    if not have(mod):
-        sh(f"{sys.executable} -m pip install -q {pip}")
+# Install EVERYTHING in one pip invocation so the resolver reconciles the old
+# pins together. Two hazards this avoids, both hit live:
+#   - Installing datasets==2.14.6 SEPARATELY after the editable openwakeword
+#     uninstalls/clobbers openwakeword (resolver conflict).
+#   - datasets==2.14.6 is REQUIRED: newer datasets decodes audio via torchcodec
+#     (AudioDecoder), breaking the dict row["audio"]["path"]/["array"] access.
+# Sentinel-guarded so re-runs within a runtime skip it (a reset wipes the
+# sentinel too, correctly forcing reinstall).
+if not os.path.exists("/content/.wake_deps_ok"):
+    sh(f"{sys.executable} -m pip install -q "
+       "-e ./openwakeword -e ./piper-sample-generator "
+       "mutagen==1.47.0 torchinfo==1.8.0 torchmetrics==1.2.0 speechbrain==0.5.14 "
+       "audiomentations==0.33.0 torch-audiomentations==0.11.0 acoustics==0.2.6 "
+       "pronouncing==0.2.0 'datasets==2.14.6' deep-phonemizer==0.0.19")
+    open("/content/.wake_deps_ok", "w").write("1")
 os.makedirs("openwakeword/openwakeword/resources/models", exist_ok=True)
 for m in ["embedding_model.onnx", "melspectrogram.onnx"]:
     p = f"openwakeword/openwakeword/resources/models/{m}"
