@@ -8,6 +8,26 @@ with no code change to the engine.
 Auto-training needs **Linux + GPU + Piper TTS** (synthetic sample generation is
 Linux-only). Easiest path is **Google Colab (GPU runtime)**.
 
+## Fastest path: the one-shot script
+
+`train_hey_divinci_colab.py` in this folder is the **entire** pipeline with every
+current-Colab fix baked in (the stock openWakeWord notebook is bit-rotted against
+Python 3.12 / torch 2.11 / piper-tts 1.3 — see the fix list in the script header).
+It was driven end-to-end to the training step; the only thing that stopped it was
+the **free Colab runtime idle-preempting** (which wipes everything mid-run).
+
+**Run it reliably:**
+1. New Colab notebook → **Runtime ▸ Change runtime type ▸ T4 GPU**.
+2. **Use Colab Pro, _or_ keep the Colab tab foregrounded the whole run** — a
+   backgrounded free runtime gets preempted and you lose all progress (~35 min).
+3. Paste the whole script into one cell and run (it's idempotent — re-run after a
+   reset and finished stages skip). ~35 min on a T4.
+4. At the end it base64-prints `hey_divinci.onnx`; copy it out (or mount Drive).
+5. Drop it in `public/models/wake/hey_divinci.onnx` → rebuild. `resolveKeyword()`
+   auto-prefers it over the stock `hey_jarvis` (no code change).
+
+The manual notebook steps below are the long-form equivalent.
+
 ## Option A — Colab (recommended)
 
 1. Open openWakeWord's training notebook in Colab with a GPU runtime:
