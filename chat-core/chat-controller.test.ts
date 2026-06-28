@@ -127,4 +127,70 @@ describe('ChatController', () => {
     expect(chat).not.toHaveBeenCalled()
     expect(onAborted).toHaveBeenCalled()
   })
+
+  it('uses resolveTools per-turn (overrides static tools)', async () => {
+    let seenTools: unknown
+    const c = new ChatController(
+      stubInference(async (req) => { seenTools = req.tools; return { text: 'ok' } }),
+      {},
+      { resolveTools: async () => [{ name: 'handoff', description: 'talk to a human' }] },
+    )
+    await c.send('hi')
+    expect(seenTools).toEqual([{ name: 'handoff', description: 'talk to a human' }])
+  })
+
+  it('runs a bounded tool loop: tool-call → execute → feed result back → final answer', async () => {
+    let hop = 0
+    const chat = vi.fn(async () => {
+      hop++
+      return hop === 1
+        ? { text: '', toolCalls: [{ id: '1', name: 'handoff', arguments: { reason: 'help' } }] }
+        : { text: 'A human will reach out shortly.' }
+    })
+    const executeToolCalls = vi.fn(async () => 'A support agent has been notified.')
+    const onToolStatus = vi.fn()
+    const onAssistantMessage = vi.fn()
+    const c = new ChatController(
+      { kind: 'local', label: 'stub', isReady: () => true, chat },
+      { onToolStatus, onAssistantMessage },
+      { executeToolCalls },
+    )
+    await c.send('talk to a human')
+
+    expect(chat).toHaveBeenCalledTimes(2) // initial + follow-up
+    expect(executeToolCalls).toHaveBeenCalledOnce()
+    expect(onToolStatus.mock.calls.map((x) => x[0].status)).toEqual(['routing', 'done'])
+    expect(onAssistantMessage).toHaveBeenCalledWith({ role: 'assistant', content: 'A human will reach out shortly.' })
+    // History carries the loop: user, assistant(toolcall), user(tool results), assistant(final).
+    expect(c.history.map((m) => m.role)).toEqual(['user', 'assistant', 'user', 'assistant'])
+    expect(c.history[2].content).toContain('A support agent has been notified.')
+  })
+
+  it('does not loop when executeToolCalls returns null (no matching tool)', async () => {
+    const chat = vi.fn(async () => ({ text: 'hi', toolCalls: [{ id: '1', name: 'unknown', arguments: {} }] }))
+    const executeToolCalls = vi.fn(async () => null)
+    const onAssistantMessage = vi.fn()
+    const c = new ChatController(
+      { kind: 'local', label: 'stub', isReady: () => true, chat },
+      { onAssistantMessage },
+      { executeToolCalls },
+    )
+    await c.send('go')
+    expect(chat).toHaveBeenCalledOnce()
+    expect(onAssistantMessage).toHaveBeenCalledWith({ role: 'assistant', content: 'hi' })
+  })
+
+  it('caps tool hops at maxToolHops', async () => {
+    const chat = vi.fn(async () => ({ text: 'loop', toolCalls: [{ id: '1', name: 'x', arguments: {} }] }))
+    const executeToolCalls = vi.fn(async () => 'again')
+    const c = new ChatController(
+      { kind: 'local', label: 'stub', isReady: () => true, chat },
+      {},
+      { executeToolCalls, maxToolHops: 2 },
+    )
+    await c.send('go')
+    // 1 initial + 2 hops = 3 inference calls, then it stops even though tools persist.
+    expect(chat).toHaveBeenCalledTimes(3)
+    expect(executeToolCalls).toHaveBeenCalledTimes(2)
+  })
 })

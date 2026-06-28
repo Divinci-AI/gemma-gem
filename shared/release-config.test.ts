@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseReleaseConfig, sanitizeSiteConfigMap } from "./release-config";
+import { parseReleaseConfig, sanitizeSiteConfigMap, resolveLocalized } from "./release-config";
 
 describe("parseReleaseConfig", () => {
   it("accepts the web release field names", () => {
@@ -65,6 +65,66 @@ describe("parseReleaseConfig", () => {
 
   it("keeps a partial config (only welcome)", () => {
     expect(parseReleaseConfig({ welcomeMessage: "Hey" })).toEqual({ welcomeMessage: "Hey" });
+  });
+});
+
+describe("parseReleaseConfig — localized", () => {
+  it("parses per-language welcome/starters and lowercases keys", () => {
+    const cfg = parseReleaseConfig({
+      welcomeMessage: "Hi",
+      localized: {
+        "es": { welcomeMessage: "Hola", conversationStarters: ["Ayuda"] },
+        "ZH-Hans": { welcome: "你好" },
+      },
+    });
+    expect(cfg!.localized).toEqual({
+      es: { welcomeMessage: "Hola", conversationStarters: ["Ayuda"] },
+      "zh-hans": { welcomeMessage: "你好" },
+    });
+  });
+
+  it("drops malformed lang keys + empty entries", () => {
+    const cfg = parseReleaseConfig({
+      welcomeMessage: "Hi",
+      localized: { "en US": { welcomeMessage: "x" }, fr: { junk: 1 }, de: { welcomeMessage: "Hallo" } },
+    });
+    expect(Object.keys(cfg!.localized!)).toEqual(["de"]);
+  });
+});
+
+describe("resolveLocalized", () => {
+  const cfg = parseReleaseConfig({
+    welcomeMessage: "Hello",
+    conversationStarters: ["Help"],
+    localized: {
+      es: { welcomeMessage: "Hola", conversationStarters: ["Ayuda"] },
+      "fr-ca": { welcomeMessage: "Bonjour" },
+    },
+  })!;
+
+  it("exact-matches a preferred tag", () => {
+    expect(resolveLocalized(cfg, ["es"])).toEqual({ welcomeMessage: "Hola", conversationStarters: ["Ayuda"] });
+  });
+
+  it("primary-subtag matches (es-MX → es)", () => {
+    expect(resolveLocalized(cfg, ["es-MX"]).welcomeMessage).toBe("Hola");
+  });
+
+  it("matches fr → fr-ca by shared primary subtag, falling back to base starters", () => {
+    expect(resolveLocalized(cfg, ["fr"])).toEqual({ welcomeMessage: "Bonjour", conversationStarters: ["Help"] });
+  });
+
+  it("respects preference order", () => {
+    expect(resolveLocalized(cfg, ["de", "es"]).welcomeMessage).toBe("Hola");
+  });
+
+  it("falls back to base when no language matches", () => {
+    expect(resolveLocalized(cfg, ["de", "ja"])).toEqual({ welcomeMessage: "Hello", conversationStarters: ["Help"] });
+  });
+
+  it("returns base when there is no localized map", () => {
+    const plain = parseReleaseConfig({ welcomeMessage: "Hi" })!;
+    expect(resolveLocalized(plain, ["es"])).toEqual({ welcomeMessage: "Hi", conversationStarters: undefined });
   });
 });
 

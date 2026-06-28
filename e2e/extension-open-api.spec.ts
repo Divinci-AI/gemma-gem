@@ -162,6 +162,53 @@ test('configure() with a pre-seeded grant stores a validated site config', async
   }
 })
 
+test('WebMCP consumer shim lists + calls a page-declared tool', async () => {
+  const context = await launch()
+  try {
+    const page = await context.newPage()
+    await page.goto(`${ORIGIN}/`)
+    // The MAIN-world shim (divinci-webmcp-main) injects at document_start.
+    await page.waitForFunction(() => !!(window as unknown as { divinci?: unknown }).divinci, { timeout: 10_000 })
+
+    // The page declares a WebMCP tool on navigator.modelContext (MAIN world).
+    // Then we drive the WEBMCP_BRIDGE_NS protocol the shim answers — list + call.
+    const result = await page.evaluate(async () => {
+      ;(navigator as unknown as { modelContext: unknown }).modelContext = {
+        tools: [
+          {
+            name: 'order_status',
+            description: 'Look up an order',
+            inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+            execute: (input: { id: string }) => ({ status: 'shipped', id: input.id }),
+          },
+        ],
+      }
+      const NS = 'divinci-webmcp-bridge'
+      function rpc(req: Record<string, unknown>): Promise<Record<string, unknown>> {
+        return new Promise((resolve) => {
+          const onMsg = (e: MessageEvent) => {
+            const d = e.data as { __ns?: string; id?: string; op?: string }
+            if (e.source === window && d?.__ns === NS && d.id === req.id && d.op !== 'list' && d.op !== 'call') {
+              window.removeEventListener('message', onMsg)
+              resolve(e.data)
+            }
+          }
+          window.addEventListener('message', onMsg)
+          window.postMessage({ ...req, __ns: NS }, window.location.origin)
+        })
+      }
+      const list = await rpc({ id: 'l1', op: 'list' })
+      const call = await rpc({ id: 'c1', op: 'call', name: 'order_status', input: { id: 'A1' } })
+      return { list, call }
+    })
+
+    expect((result.list as { tools: Array<{ name: string }> }).tools.map((t) => t.name)).toContain('order_status')
+    expect(result.call).toMatchObject({ op: 'call-result', ok: true, result: { status: 'shipped', id: 'A1' } })
+  } finally {
+    await context.close()
+  }
+})
+
 test('a pre-seeded grant skips the banner (gate honors stored consent)', async () => {
   const context = await launch()
   try {

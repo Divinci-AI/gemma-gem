@@ -39,6 +39,12 @@ export interface SiteThemeConfig {
   accent?: string;
 }
 
+/** Per-language overrides for the greeting + starters (keyed by BCP-47 code). */
+export interface LocalizedStrings {
+  welcomeMessage?: string;
+  conversationStarters?: string[];
+}
+
 /** The validated, clamped config the extension stores + applies. */
 export interface SiteReleaseConfig {
   welcomeMessage?: string;
@@ -46,6 +52,8 @@ export interface SiteReleaseConfig {
   systemPrompt?: string;
   supportedLanguages?: string[];
   theme?: SiteThemeConfig;
+  /** Per-language welcome/starters; falls back to the base fields when absent. */
+  localized?: Record<string, LocalizedStrings>;
 }
 
 function cleanString(v: unknown, max: number): string | undefined {
@@ -84,6 +92,35 @@ function cleanLanguages(v: unknown): string[] | undefined {
     if (out.length >= MAX_LANGS) break;
   }
   return out.length ? out : undefined;
+}
+
+/** A BCP-47-ish language tag: letters/digits/hyphens, reasonable length. */
+function cleanLangTag(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t && /^[A-Za-z0-9-]+$/.test(t) && t.length <= MAX_LANG_LEN ? t : undefined;
+}
+
+function cleanLocalized(v: unknown): Record<string, LocalizedStrings> | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const out: Record<string, LocalizedStrings> = {};
+  let count = 0;
+  for (const [rawLang, rawVal] of Object.entries(v as Record<string, unknown>)) {
+    const lang = cleanLangTag(rawLang);
+    if (!lang || !rawVal || typeof rawVal !== "object") continue;
+    const o = rawVal as Record<string, unknown>;
+    const entry: LocalizedStrings = {};
+    const welcome = cleanString(o.welcomeMessage ?? o.welcome, MAX_WELCOME);
+    if (welcome) entry.welcomeMessage = welcome;
+    const starters = cleanStarters(o.conversationStarters ?? o.starters);
+    if (starters) entry.conversationStarters = starters;
+    if (Object.keys(entry).length) {
+      // Normalize the key to lowercase so lookup is case-insensitive.
+      out[lang.toLowerCase()] = entry;
+      if (++count >= MAX_LANGS) break;
+    }
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 function cleanTheme(v: unknown): SiteThemeConfig | undefined {
@@ -127,7 +164,49 @@ export function parseReleaseConfig(raw: unknown): SiteReleaseConfig | null {
   const theme = cleanTheme(o.theme);
   if (theme) config.theme = theme;
 
+  const localized = cleanLocalized(o.localized);
+  if (localized) config.localized = localized;
+
   return Object.keys(config).length ? config : null;
+}
+
+/**
+ * Resolve the welcome + starters for the user's preferred languages. Tries each
+ * preferred tag in order against the config's `localized` map — exact match
+ * first, then primary-subtag (e.g. "es-MX" → "es") — and merges the localized
+ * overrides onto the base fields. Falls back entirely to the base when nothing
+ * matches. Pure + deterministic.
+ */
+export function resolveLocalized(
+  config: SiteReleaseConfig,
+  preferred: readonly string[],
+): { welcomeMessage?: string; conversationStarters?: string[] } {
+  const base = {
+    welcomeMessage: config.welcomeMessage,
+    conversationStarters: config.conversationStarters,
+  };
+  const loc = config.localized;
+  if (!loc) return base;
+
+  const keys = Object.keys(loc); // already lowercased at parse time
+  for (const raw of preferred) {
+    if (typeof raw !== "string") continue;
+    const tag = raw.trim().toLowerCase();
+    if (!tag) continue;
+    const primary = tag.split("-")[0];
+    // exact tag, then any key sharing the primary subtag.
+    const hitKey =
+      (keys.includes(tag) && tag) ||
+      keys.find((k) => k === primary || k.split("-")[0] === primary);
+    if (hitKey) {
+      const o = loc[hitKey];
+      return {
+        welcomeMessage: o.welcomeMessage ?? base.welcomeMessage,
+        conversationStarters: o.conversationStarters ?? base.conversationStarters,
+      };
+    }
+  }
+  return base;
 }
 
 export type SiteConfigMap = Record<string, SiteReleaseConfig>;

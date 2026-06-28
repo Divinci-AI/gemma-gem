@@ -8,7 +8,7 @@
  */
 
 import type { ChatMessage, InferenceClient, ToolStatusUpdate } from '@/chat-core/inference'
-import type { ChatTool } from '@/shared/messages'
+import type { ChatTool, ChatToolCall } from '@/shared/messages'
 
 export interface ChatControllerEvents {
   /** A user turn was added (echo it to the transcript). */
@@ -41,6 +41,21 @@ export interface ChatControllerOptions {
   maxNewTokens?: number
   temperature?: number
   tools?: ChatTool[]
+  /**
+   * Discover the tools available THIS turn (e.g. the page's WebMCP tools, which
+   * change per page). When set, its result is used instead of the static
+   * `tools`. Returns [] for none.
+   */
+  resolveTools?: () => ChatTool[] | Promise<ChatTool[]>
+  /**
+   * Execute the tool calls the model emitted (e.g. call the page's WebMCP tools)
+   * and return a text blob of results to feed back for a follow-up answer.
+   * Return null/empty to skip the follow-up (no matching tool / nothing to do).
+   * Enables a bounded agentic loop; absent → tool calls are surfaced but not run.
+   */
+  executeToolCalls?: (calls: ChatToolCall[]) => Promise<string | null>
+  /** Max tool-execution hops per user turn (default 2). */
+  maxToolHops?: number
 }
 
 export class ChatController {
@@ -97,25 +112,60 @@ export class ChatController {
         this.events.onAborted?.('')
         return
       }
-      const result = await this.inference.chat({
-        messages: [...prefix, ...this.messages],
-        maxNewTokens: this.options.maxNewTokens,
-        temperature: this.options.temperature,
-        tools: this.options.tools,
-        signal: this.abortController.signal,
-        onToken: (delta) => this.events.onToken?.(delta),
-        onToolStatus: (u) => this.events.onToolStatus?.(u),
-      })
+      // Per-turn tools (e.g. the page's WebMCP tools) override the static list.
+      const tools = this.options.resolveTools ? await this.options.resolveTools() : this.options.tools
+      const maxHops = this.options.maxToolHops ?? 2
+      let hop = 0
 
-      if (result.aborted) {
-        // Keep the partial assistant text in history (matches the sidebar's
-        // prior behavior — a stopped turn is still part of the conversation).
-        if (result.text) this.messages.push({ role: 'assistant', content: result.text })
-        this.events.onAborted?.(result.text)
-      } else {
-        const assistantMessage: ChatMessage = { role: 'assistant', content: result.text }
-        this.messages.push(assistantMessage)
-        this.events.onAssistantMessage?.(assistantMessage)
+      // Bounded agentic loop: run inference; if the model emits tool calls AND a
+      // tool executor is configured, run them, feed the results back, and answer
+      // again. Each hop streams into the SAME assistant bubble — the UI clears it
+      // on the onToolStatus('routing') signal so only the final answer shows.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const result = await this.inference.chat({
+          messages: [...prefix, ...this.messages],
+          maxNewTokens: this.options.maxNewTokens,
+          temperature: this.options.temperature,
+          tools,
+          signal: this.abortController!.signal,
+          onToken: (delta) => this.events.onToken?.(delta),
+          onToolStatus: (u) => this.events.onToolStatus?.(u),
+        })
+
+        if (result.aborted) {
+          if (result.text) this.messages.push({ role: 'assistant', content: result.text })
+          this.events.onAborted?.(result.text)
+          return
+        }
+
+        // The model's turn (carries any tool-call markup) is part of history.
+        this.messages.push({ role: 'assistant', content: result.text })
+
+        const calls = result.toolCalls ?? []
+        const canRunTools =
+          calls.length > 0 && !!this.options.executeToolCalls && hop < maxHops && !this.abortController!.signal.aborted
+        if (canRunTools) {
+          hop++
+          const statusCalls = calls.map((c) => ({ name: c.name, args: c.args ?? c.arguments ?? {} }))
+          this.events.onToolStatus?.({ status: 'routing', calls: statusCalls })
+          let toolText: string | null = null
+          try {
+            toolText = await this.options.executeToolCalls!(calls)
+          } catch (e) {
+            this.events.onToolStatus?.({ status: 'error', calls: statusCalls, error: (e as Error).message })
+          }
+          if (toolText) {
+            this.events.onToolStatus?.({ status: 'done', calls: statusCalls })
+            // Feed tool results back as a fenced, data-only user turn, then loop.
+            this.messages.push({ role: 'user', content: toolText })
+            continue
+          }
+        }
+
+        // No tools to run (or hop budget spent) → this is the final answer.
+        this.events.onAssistantMessage?.({ role: 'assistant', content: result.text })
+        break
       }
     } catch (err) {
       this.events.onError?.(err instanceof Error ? err : new Error(String(err)))

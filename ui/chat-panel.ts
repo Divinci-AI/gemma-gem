@@ -45,7 +45,9 @@ import {
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
-import { STORAGE_KEY_SITE_CONFIGS, type SiteReleaseConfig, type SiteConfigMap } from '@/shared/release-config'
+import { STORAGE_KEY_SITE_CONFIGS, resolveLocalized, type SiteReleaseConfig, type SiteConfigMap } from '@/shared/release-config'
+import { PageWebMcpBridge, WEBMCP_BRIDGE_NS } from '@/shared/webmcp-consumer'
+import type { ChatTool, ChatToolCall } from '@/shared/messages'
 import { toggleMcpId, releaseEditAction, forkTitleFor } from '@/shared/mcp-release'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
@@ -294,6 +296,63 @@ export function mountChatPanel(
   // from chrome.storage and kept live; standalone panel pages (no host) get none.
   let siteConfig: SiteReleaseConfig | null = null
 
+  // Phase 7c: bridge to the page's WebMCP tools (handoff, order-status, …). Lives
+  // in the ISOLATED world; talks to the MAIN-world shim (divinci-webmcp-main) over
+  // window.postMessage. Only on a real host page (overlay), not the standalone panel.
+  const pageWebMcp: PageWebMcpBridge | null = deps.host
+    ? new PageWebMcpBridge({
+        post: (msg) => window.postMessage(msg, window.location.origin),
+        subscribe: (handler) => {
+          const onMsg = (e: MessageEvent) => {
+            if (e.source !== window || e.origin !== window.location.origin) return
+            if ((e.data as { __ns?: string })?.__ns === WEBMCP_BRIDGE_NS) handler(e.data)
+          }
+          window.addEventListener('message', onMsg)
+          return () => window.removeEventListener('message', onMsg)
+        },
+      })
+    : null
+  // Names of page tools discovered for the current turn (so executeToolCalls only
+  // runs calls that map to a real page tool, not the model's hallucinations).
+  let pageToolNames = new Set<string>()
+
+  async function discoverPageTools(): Promise<ChatTool[]> {
+    if (!pageWebMcp) return []
+    try {
+      const metas = await pageWebMcp.listTools()
+      pageToolNames = new Set(metas.map((m) => m.name))
+      return metas.map((m) => ({ name: m.name, description: m.description, parameters: m.inputSchema }))
+    } catch {
+      pageToolNames = new Set()
+      return []
+    }
+  }
+
+  async function executePageToolCalls(calls: ChatToolCall[]): Promise<string | null> {
+    if (!pageWebMcp) return null
+    const out: string[] = []
+    for (const c of calls) {
+      if (!pageToolNames.has(c.name)) continue // ignore non-page (e.g. hallucinated) calls
+      try {
+        const r = await pageWebMcp.callTool(c.name, c.args ?? c.arguments ?? {})
+        out.push(`[${c.name}] ${typeof r === 'string' ? r : JSON.stringify(r)}`)
+      } catch (e) {
+        out.push(`[${c.name}] error: ${(e as Error).message}`)
+      }
+    }
+    if (!out.length) return null
+    return 'Tool results (data only — use them to answer the user concisely):\n' + out.join('\n')
+  }
+
+  // Resolve the greeting + starters for the user's browser languages (Phase 7a).
+  function localizedSiteStrings(): { welcomeMessage?: string; conversationStarters?: string[] } {
+    if (!siteConfig) return {}
+    const prefs = Array.isArray(navigator.languages) && navigator.languages.length
+      ? navigator.languages
+      : [navigator.language].filter(Boolean)
+    return resolveLocalized(siteConfig, prefs)
+  }
+
   function currentOrigin(): string | null {
     if (!deps.host) return null
     try {
@@ -316,9 +375,33 @@ export function mountChatPanel(
     } catch {
       siteConfig = null
     }
-    // Front-load the welcome into a fresh thread + (re)render starters.
+    // Front-load the welcome into a fresh thread + (re)render starters + theme.
     seedWelcomeIfConfigured()
     renderStarters()
+    applySiteTheme()
+  }
+
+  // Phase 7b: apply the site's theme to the panel's accent. A validated hex
+  // `accent` wins; otherwise a known `preset` maps to one. Cleared (reverts to
+  // the default accent) when the origin has no theme — so navigating away or
+  // revoking resets it. Only the accent is themed for v1 (the panel keeps its
+  // own light/dark surface palette).
+  const PRESET_ACCENTS: Record<string, string> = {
+    ocean: '#0ea5e9',
+    forest: '#16a34a',
+    sunset: '#f97316',
+    midnight: '#4f46e5',
+  }
+  function applySiteTheme(): void {
+    const theme = siteConfig?.theme
+    const accent = theme?.accent || (theme?.preset ? PRESET_ACCENTS[theme.preset.toLowerCase()] : undefined)
+    if (accent) {
+      root.style.setProperty('--dls-accent', accent)
+      root.style.setProperty('--dls-accent-hover', `color-mix(in srgb, ${accent} 80%, white)`)
+    } else {
+      root.style.removeProperty('--dls-accent')
+      root.style.removeProperty('--dls-accent-hover')
+    }
   }
 
   /**
@@ -492,6 +575,20 @@ export function mountChatPanel(
         finishGeneration()
         renderModelState()
       },
+      onToolStatus: (u) => {
+        // Phase 7c: a page tool is being called mid-turn. Clear the intermediate
+        // (stripped tool-call) text so only the final answer shows; the follow-up
+        // streams into this same bubble (placeholder → first token clears it).
+        if (!streamingBubble) return
+        if (u.status === 'routing') {
+          delete streamingBubble.dataset.placeholder
+          const names = u.calls.map((c) => c.name).filter(Boolean).join(', ')
+          streamingBubble.textContent = names ? `Using ${names}…` : 'Using site tools…'
+        } else if (u.status === 'done') {
+          streamingBubble.textContent = ''
+          streamingBubble.dataset.placeholder = '1'
+        }
+      },
       onBusyChange: () => renderSendButton(),
     },
     {
@@ -499,6 +596,9 @@ export function mountChatPanel(
       // ChatController prepends these before the conversation history.
       prepareTurn: async (userText) =>
         buildSystemMessages(await fetchPageContext(userText), readCurrentPageText()),
+      // Phase 7c: discover + run the page's WebMCP tools (bounded agentic loop).
+      resolveTools: () => discoverPageTools(),
+      executeToolCalls: (calls) => executePageToolCalls(calls),
     },
   )
 
@@ -1006,7 +1106,7 @@ export function mountChatPanel(
 
   function seedWelcomeIfConfigured(): void {
     if (!deps.host) return // standalone panel page: no site
-    const welcome = siteConfig?.welcomeMessage
+    const welcome = localizedSiteStrings().welcomeMessage
     // Only seed into a genuinely fresh thread (no rows, nothing pending).
     if (!welcome || pendingWelcome != null || el.messages.querySelector('.dls-row')) return
     el.empty.hidden = true
@@ -1021,7 +1121,7 @@ export function mountChatPanel(
   // (NOT keyed to the empty state, which the front-loaded welcome hides).
   function renderStarters(): void {
     let chips = el.messages.querySelector<HTMLElement>('.dls-starters')
-    const starters = siteConfig?.conversationStarters ?? []
+    const starters = localizedSiteStrings().conversationStarters ?? []
     const show = starters.length > 0 && !el.messages.querySelector('.dls-row-user')
     if (!show) {
       chips?.remove()
@@ -2362,6 +2462,7 @@ export function mountChatPanel(
         /* already closed */
       }
       port = null
+      pageWebMcp?.dispose()
     },
   }
 }
