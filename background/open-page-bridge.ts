@@ -24,6 +24,7 @@ import {
   sanitizeGrantMap,
   type GrantMap,
 } from "@/shared/origin-consent";
+import { STORAGE_KEY_SITE_CONFIGS, parseReleaseConfig } from "@/shared/release-config";
 import {
   DIVINCI_PUBLIC_NS,
   DIVINCI_PUBLIC_PROTOCOL_VERSION,
@@ -145,6 +146,23 @@ async function handleRequest(caller: string, port: chrome.runtime.Port, req: Pub
     case "abort": {
       const internal: InternalRequest = { type: "internal:abort", requestId: req.id, caller };
       chrome.runtime.sendMessage(internal as Message).catch((e) => log.warn("open-page abort forward failed:", e));
+      return;
+    }
+
+    case "forward-config": {
+      if (req.op !== "configure" || !origin) {
+        postPublic(port, { __ns: DIVINCI_PUBLIC_NS, id: req.id, op: "configure-result", applied: null });
+        return;
+      }
+      const applied = parseReleaseConfig(req.config);
+      // Read-modify-write the per-origin config map. null applied → clear this
+      // origin's config (a site can reset by sending an empty/garbage config).
+      const stored = await chrome.storage.local.get(STORAGE_KEY_SITE_CONFIGS);
+      const map = (stored[STORAGE_KEY_SITE_CONFIGS] as Record<string, unknown>) ?? {};
+      if (applied) map[origin] = applied;
+      else delete map[origin];
+      await chrome.storage.local.set({ [STORAGE_KEY_SITE_CONFIGS]: map });
+      postPublic(port, { __ns: DIVINCI_PUBLIC_NS, id: req.id, op: "configure-result", applied });
       return;
     }
 

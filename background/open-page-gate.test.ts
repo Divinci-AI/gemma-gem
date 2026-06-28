@@ -73,6 +73,20 @@ describe("gateOpenPageRequest", () => {
     expect(a).toMatchObject({ kind: "reply-error", code: "invalid-request" });
   });
 
+  it("configure prompts without the configure scope, forwards with it", () => {
+    const noGrant = gateOpenPageRequest({ req: req({ op: "configure", config: {} }) as PublicRequest, origin: "https://x.com", grants: empty, trustedOrigins: TRUSTED });
+    expect(noGrant).toMatchObject({ kind: "reply-error", code: "needs-grant" });
+    const grants = grantScopes({}, "https://x.com", ["configure"], 1);
+    const ok = gateOpenPageRequest({ req: req({ op: "configure", config: {} }) as PublicRequest, origin: "https://x.com", grants, trustedOrigins: TRUSTED });
+    expect(ok).toEqual({ kind: "forward-config" });
+  });
+
+  it("configure does NOT ride the chat grant (distinct scope)", () => {
+    const grants = grantScopes({}, "https://x.com", ["chat"], 1);
+    const res = gateOpenPageRequest({ req: req({ op: "configure", config: {} }) as PublicRequest, origin: "https://x.com", grants, trustedOrigins: TRUSTED });
+    expect(res).toMatchObject({ kind: "reply-error", code: "needs-grant" });
+  });
+
   it("a2a.card needs no grant (public metadata)", () => {
     const a = gateOpenPageRequest({ req: req({ op: "a2a.card" }), origin: "https://x.com", grants: empty, trustedOrigins: TRUSTED });
     expect(a).toEqual({ kind: "agent-card" });

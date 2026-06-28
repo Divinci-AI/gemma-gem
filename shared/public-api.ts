@@ -61,6 +61,7 @@ export type PublicOp =
   | "requestAccess"
   | "chat"
   | "abort"
+  | "configure"
   // Reserved for later phases — declared now so the scope map + SDK are stable.
   | "webmcp.list"
   | "webmcp.call"
@@ -79,6 +80,7 @@ export const OP_REQUIRED_SCOPE: Record<PublicOp, ConsentScope | null> = {
   requestAccess: null,
   chat: "chat",
   abort: null, // aborting your own in-flight request needs no standing grant
+  configure: "configure", // site-supplied panel config (welcome/starters/context)
   "webmcp.list": "webmcp",
   "webmcp.call": "webmcp",
   "a2a.card": null, // the signed Agent Card is public metadata
@@ -133,11 +135,18 @@ export interface PublicA2ATaskRequest extends BaseRequest {
   prompt: string;
 }
 
+export interface PublicConfigureRequest extends BaseRequest {
+  op: "configure";
+  /** Raw site release config; validated/clamped by parseReleaseConfig (release-config.ts). */
+  config: unknown;
+}
+
 export type PublicRequest =
   | PublicPingRequest
   | PublicRequestAccessRequest
   | PublicChatRequest
   | PublicAbortRequest
+  | PublicConfigureRequest
   | PublicA2ACardRequest
   | PublicA2ATaskRequest;
 
@@ -210,6 +219,14 @@ export interface PublicA2ATaskResponse {
   task: unknown;
 }
 
+export interface PublicConfigureResultResponse {
+  __ns: typeof DIVINCI_PUBLIC_NS;
+  id: string;
+  op: "configure-result";
+  /** The validated/clamped SiteReleaseConfig that was stored, or null if nothing usable. */
+  applied: unknown;
+}
+
 export type PublicResponse =
   | PublicPongResponse
   | PublicAccessResultResponse
@@ -217,6 +234,7 @@ export type PublicResponse =
   | PublicChatDoneEvent
   | PublicAbortedEvent
   | PublicErrorEvent
+  | PublicConfigureResultResponse
   | PublicA2ACardResponse
   | PublicA2ATaskResponse;
 
@@ -227,6 +245,7 @@ const VALID_OPS: ReadonlySet<string> = new Set<PublicOp>([
   "requestAccess",
   "chat",
   "abort",
+  "configure",
   "webmcp.list",
   "webmcp.call",
   "a2a.card",
@@ -267,4 +286,10 @@ export interface DivinciPublicApi {
   agentCard(): Promise<unknown>;
   /** Submit an A2A task (prompt) to the local agent. Requires the `a2a` scope. */
   task(prompt: string): Promise<unknown>;
+  /**
+   * Configure the in-panel assistant for this site (welcome message, suggested
+   * starters, system context, languages, theme). Requires the `configure` scope
+   * (prompts if absent). Returns the validated/clamped config that was stored.
+   */
+  configure(config: unknown): Promise<unknown>;
 }

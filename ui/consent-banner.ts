@@ -17,6 +17,7 @@ const SCOPE_LABELS: Record<ConsentScope, string> = {
   chat: "run AI chat on your device (uses your GPU)",
   webmcp: "let this site's AI assistant use Divinci tools",
   a2a: "let this site's AI agent send tasks to Divinci",
+  configure: "customize the Divinci assistant (greeting, prompts, context)",
 };
 
 /** Already-open banner, so a burst of requests doesn't stack banners. */

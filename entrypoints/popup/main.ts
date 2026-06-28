@@ -24,6 +24,7 @@ import {
   type GrantMap,
 } from '@/shared/origin-consent'
 import { STORAGE_KEY_WEBMCP_EXPOSE } from '@/shared/public-api'
+import { STORAGE_KEY_SITE_CONFIGS, type SiteConfigMap } from '@/shared/release-config'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -591,9 +592,10 @@ const SCOPE_LABEL: Record<string, string> = {
   chat: 'on-device chat',
   webmcp: 'tools',
   a2a: 'agent tasks',
+  configure: 'customize panel',
 }
 
-function renderSiteAccess(grants: GrantMap): void {
+function renderSiteAccess(grants: GrantMap, configs: SiteConfigMap = {}): void {
   const origins = Object.keys(grants).sort()
   els.siteAccessList.replaceChildren()
   els.siteAccessEmpty.hidden = origins.length > 0
@@ -609,7 +611,10 @@ function renderSiteAccess(grants: GrantMap): void {
     o.textContent = origin // textContent → no HTML injection from a hostile origin string
     const s = document.createElement('span')
     s.className = 'site-access-scopes'
-    s.textContent = scopes.map((sc) => SCOPE_LABEL[sc] ?? sc).join(', ')
+    const scopeText = scopes.map((sc) => SCOPE_LABEL[sc] ?? sc).join(', ')
+    // Surface that the site has stored a panel config, so the user can see WHAT
+    // a site set (not just that it has access) and clear it via Revoke.
+    s.textContent = configs[origin] ? `${scopeText} · configured` : scopeText
     info.append(o, s)
 
     const btn = document.createElement('button')
@@ -624,23 +629,33 @@ function renderSiteAccess(grants: GrantMap): void {
 }
 
 async function loadSiteAccess(): Promise<void> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY_ORIGIN_GRANTS)
-  renderSiteAccess(sanitizeGrantMap(stored[STORAGE_KEY_ORIGIN_GRANTS]))
+  const stored = await chrome.storage.local.get([STORAGE_KEY_ORIGIN_GRANTS, STORAGE_KEY_SITE_CONFIGS])
+  renderSiteAccess(
+    sanitizeGrantMap(stored[STORAGE_KEY_ORIGIN_GRANTS]),
+    (stored[STORAGE_KEY_SITE_CONFIGS] as SiteConfigMap) ?? {},
+  )
 }
 
 async function revokeOrigin(origin: string): Promise<void> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY_ORIGIN_GRANTS)
+  const stored = await chrome.storage.local.get([STORAGE_KEY_ORIGIN_GRANTS, STORAGE_KEY_SITE_CONFIGS])
   const grants = sanitizeGrantMap(stored[STORAGE_KEY_ORIGIN_GRANTS])
   const next = revokeScopes(grants, origin) // omit scopes → revoke the whole origin
-  await chrome.storage.local.set({ [STORAGE_KEY_ORIGIN_GRANTS]: next })
-  renderSiteAccess(next)
+  // Revoking access also clears whatever the site configured — access and config
+  // are two facets of the same trust relationship.
+  const configs = { ...((stored[STORAGE_KEY_SITE_CONFIGS] as SiteConfigMap) ?? {}) }
+  delete configs[origin]
+  await chrome.storage.local.set({
+    [STORAGE_KEY_ORIGIN_GRANTS]: next,
+    [STORAGE_KEY_SITE_CONFIGS]: configs,
+  })
+  renderSiteAccess(next, configs)
 }
 
-// Reflect external changes (e.g. a fresh grant approved on a page while the
-// popup is open) without waiting for the next open.
+// Reflect external changes (a fresh grant or a site config applied on a page
+// while the popup is open) without waiting for the next open.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes[STORAGE_KEY_ORIGIN_GRANTS]) {
-    renderSiteAccess(sanitizeGrantMap(changes[STORAGE_KEY_ORIGIN_GRANTS].newValue))
+  if (area === 'local' && (changes[STORAGE_KEY_ORIGIN_GRANTS] || changes[STORAGE_KEY_SITE_CONFIGS])) {
+    void loadSiteAccess()
   }
 })
 

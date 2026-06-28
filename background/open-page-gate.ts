@@ -36,6 +36,8 @@ export type GateAction =
   | { kind: "abort" }
   /** Persist these scopes for the origin, then reply access-result. */
   | { kind: "commit-grant"; scopes: ConsentScope[] }
+  /** Authorized site config — validate + store, then reply configure-result. */
+  | { kind: "forward-config" }
   /** Refuse — reply an error event with this code + message. */
   | {
       kind: "reply-error";
@@ -84,12 +86,15 @@ export function gateOpenPageRequest(args: {
       return { kind: "agent-card" };
 
     case "chat":
-    case "a2a.task": {
+    case "a2a.task":
+    case "configure": {
       const scope = requiredScopeForOp(req.op);
-      // both ops have a required scope; belt-and-suspenders fallthrough.
-      if (!scope) return { kind: req.op === "a2a.task" ? "forward-task" : "forward" };
+      const allowKind: GateAction["kind"] =
+        req.op === "a2a.task" ? "forward-task" : req.op === "configure" ? "forward-config" : "forward";
+      // all three ops have a required scope; belt-and-suspenders fallthrough.
+      if (!scope) return { kind: allowKind };
       const res = decideConsent({ rawOrigin: origin, scope, grants, trustedOrigins });
-      if (res.decision === "allow") return { kind: req.op === "a2a.task" ? "forward-task" : "forward" };
+      if (res.decision === "allow") return { kind: allowKind };
       if (res.decision === "prompt") {
         return { kind: "reply-error", code: "needs-grant", message: `Requires "${scope}" access` };
       }

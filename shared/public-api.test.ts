@@ -16,6 +16,7 @@ describe("OP_REQUIRED_SCOPE", () => {
       "requestAccess",
       "chat",
       "abort",
+      "configure",
       "webmcp.list",
       "webmcp.call",
       "a2a.card",

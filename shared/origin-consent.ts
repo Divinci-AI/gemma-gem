@@ -20,16 +20,19 @@
 /**
  * Capability scopes a page can be granted. Deliberately coarse — one scope per
  * open surface, not per method, so the consent prompt stays comprehensible.
- *   - `chat`   : run local model inference (consume the user's GPU)
- *   - `webmcp` : the page's own agent may call extension-exposed tools
- *   - `a2a`    : the page's agent may submit tasks to the in-browser agent
+ *   - `chat`      : run local model inference (consume the user's GPU)
+ *   - `webmcp`    : the page's own agent may call extension-exposed tools
+ *   - `a2a`       : the page's agent may submit tasks to the in-browser agent
+ *   - `configure` : the site may configure the panel (welcome / starters /
+ *                   system context) — site-supplied input reaching the model,
+ *                   so it's a distinct, explicit scope (never folded into chat).
  */
-export type ConsentScope = "chat" | "webmcp" | "a2a";
+export type ConsentScope = "chat" | "webmcp" | "a2a" | "configure";
 
-export const ALL_CONSENT_SCOPES: readonly ConsentScope[] = ["chat", "webmcp", "a2a"];
+export const ALL_CONSENT_SCOPES: readonly ConsentScope[] = ["chat", "webmcp", "a2a", "configure"];
 
 export function isConsentScope(v: unknown): v is ConsentScope {
-  return v === "chat" || v === "webmcp" || v === "a2a";
+  return v === "chat" || v === "webmcp" || v === "a2a" || v === "configure";
 }
 
 /** A persisted grant for one origin. Stored under `divinci_origin_grants`. */

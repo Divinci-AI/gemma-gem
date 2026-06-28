@@ -144,6 +144,20 @@ export default defineContentScript({
           return run();
         });
       },
+
+      configure(config: unknown) {
+        const run = () =>
+          once("configure", { config }, (r) => {
+            if (r.op !== "configure-result") throw new Error("Unexpected configure reply");
+            return r.applied;
+          });
+        return run().catch(async (err: Error & { code?: string }) => {
+          if (err.code !== "needs-grant") throw err;
+          const granted = await api.requestAccess(["configure"]);
+          if (!granted.includes("configure")) throw err;
+          return run();
+        });
+      },
     };
 
     Object.defineProperty(window, "divinci", { value: Object.freeze(api), configurable: false, enumerable: false });

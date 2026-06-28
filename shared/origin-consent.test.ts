@@ -63,7 +63,8 @@ describe("isSecureOrigin", () => {
 });
 
 describe("isConsentScope", () => {
-  it("recognizes the three scopes and nothing else", () => {
+  it("recognizes the known scopes and nothing else", () => {
+    expect(ALL_CONSENT_SCOPES).toEqual(["chat", "webmcp", "a2a", "configure"]);
     for (const s of ALL_CONSENT_SCOPES) expect(isConsentScope(s)).toBe(true);
     expect(isConsentScope("admin")).toBe(false);
     expect(isConsentScope(undefined)).toBe(false);
