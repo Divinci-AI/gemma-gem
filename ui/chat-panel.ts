@@ -162,6 +162,7 @@ export function mountChatPanel(
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
     shareLink: root.querySelector<HTMLButtonElement>('.dls-share-link')!,
     newChatBtn: root.querySelector<HTMLButtonElement>('.dls-new-chat')!,
+    menuNewChat: root.querySelector<HTMLButtonElement>('.dls-menu-newchat')!,
     convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
     panel: root.querySelector<HTMLElement>('.dls-panel')!,
     resize: root.querySelector<HTMLElement>('.dls-resize')!,
@@ -1962,6 +1963,12 @@ export function mountChatPanel(
   })
   el.close.addEventListener('click', () => setOpen(false))
   el.newChatBtn.addEventListener('click', newChat)
+  // Same "New chat" action from the hamburger menu — available in every panel
+  // mode (the conversation rail's +New chat is hidden in narrow overlay/dock).
+  el.menuNewChat.addEventListener('click', () => {
+    toggleMenu(false)
+    newChat()
+  })
   // Hamburger menu (global / full-screen / share) — open/close.
   el.menuBtn.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -2299,6 +2306,11 @@ const TEMPLATE = /* html */ `
                 <span class="dls-mode-btn-label">Full</span>
               </button>
             </div>
+            <div class="dls-menu-sep"></div>
+            <button class="dls-menu-item dls-menu-newchat" type="button" role="menuitem">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
+              <span class="dls-menu-label">New chat</span>
+            </button>
             <div class="dls-menu-sep"></div>
             <button class="dls-menu-item dls-tools-btn" type="button" role="menuitem">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17v3h3l5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z"/></svg>

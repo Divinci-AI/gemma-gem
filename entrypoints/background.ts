@@ -17,6 +17,7 @@
 
 import { ensureOffscreenDocument } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
+import { setupOpenPageBridge } from '@/background/open-page-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
 import { setupWwwRagBridge } from '@/background/www-rag-bridge'
 import { setupDivinciAuthBridge } from '@/background/divinci-auth'
@@ -207,6 +208,7 @@ export default defineBackground(() => {
   })
 
   setupExternalBridge()
+  setupOpenPageBridge()
   setupInternalBridge()
   setupWwwRagBridge()
   setupDivinciAuthBridge()

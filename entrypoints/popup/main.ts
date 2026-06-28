@@ -17,6 +17,13 @@ import type {
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
 import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId } from '@/shared/models'
+import {
+  STORAGE_KEY_ORIGIN_GRANTS,
+  sanitizeGrantMap,
+  revokeScopes,
+  type GrantMap,
+} from '@/shared/origin-consent'
+import { STORAGE_KEY_WEBMCP_EXPOSE } from '@/shared/public-api'
 
 const POLL_INTERVAL_MS = 1000
 
@@ -27,6 +34,9 @@ const els = {
   clearCacheBtn: document.getElementById('clear-cache-btn') as HTMLButtonElement,
   statusWake: document.getElementById('status-wake')!,
   wakeToggleBtn: document.getElementById('wake-toggle-btn') as HTMLButtonElement,
+  siteAccessList: document.getElementById('site-access-list')!,
+  siteAccessEmpty: document.getElementById('site-access-empty')!,
+  webmcpExposeToggle: document.getElementById('webmcp-expose-toggle') as HTMLInputElement,
   statusProgress: document.getElementById('status-progress')!,
   progressFile: document.getElementById('progress-file')!,
   progressPct: document.getElementById('progress-pct')!,
@@ -572,6 +582,76 @@ els.clearCacheBtn.addEventListener('click', async () => {
 // ---- Wake word (Phase B0: hands-free "Hey Jarvis") ---------------------
 // Mic permission is granted HERE (popup has UI + a user gesture); the offscreen
 // doc that runs the always-on loop can't prompt. Detection happens fully
+// ---- Site access (open programmatic API grants) ------------------------
+// Lists every origin the user granted access to (window.divinci / WebMCP / A2A)
+// with a per-origin revoke. The SW's open-page bridge reads the same
+// chrome.storage key live, so a revoke takes effect immediately.
+
+const SCOPE_LABEL: Record<string, string> = {
+  chat: 'on-device chat',
+  webmcp: 'tools',
+  a2a: 'agent tasks',
+}
+
+function renderSiteAccess(grants: GrantMap): void {
+  const origins = Object.keys(grants).sort()
+  els.siteAccessList.replaceChildren()
+  els.siteAccessEmpty.hidden = origins.length > 0
+  for (const origin of origins) {
+    const scopes = grants[origin].scopes
+    const li = document.createElement('li')
+    li.className = 'site-access-row'
+
+    const info = document.createElement('div')
+    info.className = 'site-access-info'
+    const o = document.createElement('span')
+    o.className = 'site-access-origin'
+    o.textContent = origin // textContent → no HTML injection from a hostile origin string
+    const s = document.createElement('span')
+    s.className = 'site-access-scopes'
+    s.textContent = scopes.map((sc) => SCOPE_LABEL[sc] ?? sc).join(', ')
+    info.append(o, s)
+
+    const btn = document.createElement('button')
+    btn.className = 'inline-action'
+    btn.textContent = 'Revoke'
+    btn.title = `Revoke all access for ${origin}`
+    btn.addEventListener('click', () => void revokeOrigin(origin))
+
+    li.append(info, btn)
+    els.siteAccessList.appendChild(li)
+  }
+}
+
+async function loadSiteAccess(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_ORIGIN_GRANTS)
+  renderSiteAccess(sanitizeGrantMap(stored[STORAGE_KEY_ORIGIN_GRANTS]))
+}
+
+async function revokeOrigin(origin: string): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_ORIGIN_GRANTS)
+  const grants = sanitizeGrantMap(stored[STORAGE_KEY_ORIGIN_GRANTS])
+  const next = revokeScopes(grants, origin) // omit scopes → revoke the whole origin
+  await chrome.storage.local.set({ [STORAGE_KEY_ORIGIN_GRANTS]: next })
+  renderSiteAccess(next)
+}
+
+// Reflect external changes (e.g. a fresh grant approved on a page while the
+// popup is open) without waiting for the next open.
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes[STORAGE_KEY_ORIGIN_GRANTS]) {
+    renderSiteAccess(sanitizeGrantMap(changes[STORAGE_KEY_ORIGIN_GRANTS].newValue))
+  }
+})
+
+async function loadWebmcpExpose(): Promise<void> {
+  const stored = await chrome.storage.local.get(STORAGE_KEY_WEBMCP_EXPOSE)
+  els.webmcpExposeToggle.checked = stored[STORAGE_KEY_WEBMCP_EXPOSE] === true
+}
+els.webmcpExposeToggle.addEventListener('change', () => {
+  void chrome.storage.local.set({ [STORAGE_KEY_WEBMCP_EXPOSE]: els.webmcpExposeToggle.checked })
+})
+
 // on-device. State persists so the toggle reflects reality across popup opens.
 const STORAGE_KEY_WAKE = 'divinci-wake-enabled'
 
@@ -659,6 +739,8 @@ void loadPrivacySettings()
 void loadTheme()
 void loadShowHandle()
 void loadWake()
+void loadSiteAccess()
+void loadWebmcpExpose()
 void refreshAuthStatus()
 setInterval(poll, POLL_INTERVAL_MS)
 // Disk estimate updates less frequently — it only changes when files are

@@ -27,6 +27,11 @@ export default defineConfig({
       testMatch: /extension-smoke\.spec\.ts$/,
     },
     {
+      // Open programmatic API (window.divinci on any origin). No model load.
+      name: 'open-api',
+      testMatch: /extension-open-api\.spec\.ts$/,
+    },
+    {
       name: 'full-inference',
       testMatch: /extension-inference\.spec\.ts$/,
       // Default: skipped. Opt in with RUN_REAL_INFERENCE=1.
