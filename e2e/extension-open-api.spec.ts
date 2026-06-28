@@ -114,6 +114,54 @@ test('chat() without a grant raises the in-page consent banner', async () => {
   }
 })
 
+test('configure() with a pre-seeded grant stores a validated site config', async () => {
+  const context = await launch()
+  try {
+    const sw = context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 10_000 }))
+    await sw.evaluate(
+      async ([origin]) => {
+        await chrome.storage.local.set({
+          divinci_origin_grants: { [origin]: { origin, scopes: ['configure'], grantedAt: 1 } },
+        })
+      },
+      [ORIGIN],
+    )
+
+    const page = await context.newPage()
+    await page.goto(`${ORIGIN}/`)
+    await page.waitForFunction(() => !!(window as unknown as { divinci?: unknown }).divinci, { timeout: 10_000 })
+
+    const applied = await page.evaluate(() =>
+      (window as unknown as { divinci: { configure(c: unknown): Promise<unknown> } }).divinci.configure({
+        welcomeMessage: 'Welcome to ACME',
+        conversationStarters: ['Track my order', 'Returns policy'],
+        systemPrompt: 'You help ACME shoppers.',
+        theme: { accent: 'not-a-color' }, // dropped by validation
+      }),
+    )
+    // Validation clamped/dropped the bad theme; the rest persisted.
+    expect(applied).toMatchObject({
+      welcomeMessage: 'Welcome to ACME',
+      conversationStarters: ['Track my order', 'Returns policy'],
+      systemPrompt: 'You help ACME shoppers.',
+    })
+    expect((applied as { theme?: unknown }).theme).toBeUndefined()
+    expect(await page.locator('[data-divinci-consent]').count()).toBe(0) // grant present → no prompt
+
+    // The SW persisted it per-origin under divinci_site_configs.
+    const stored = await sw.evaluate(
+      async ([origin]) => {
+        const s = await chrome.storage.local.get('divinci_site_configs')
+        return (s.divinci_site_configs as Record<string, unknown>)?.[origin]
+      },
+      [ORIGIN],
+    )
+    expect(stored).toMatchObject({ welcomeMessage: 'Welcome to ACME' })
+  } finally {
+    await context.close()
+  }
+})
+
 test('a pre-seeded grant skips the banner (gate honors stored consent)', async () => {
   const context = await launch()
   try {
