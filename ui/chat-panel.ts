@@ -3113,7 +3113,13 @@ export const SIDEBAR_CSS = /* css */ `
     color: var(--dls-muted); padding: 4px 10px 2px;
   }
   .dls-menu-convs-empty { color: var(--dls-muted); font-size: 12px; padding: 4px 10px 8px; }
-  .dls-menu-convlist { display: flex; flex-direction: column; gap: 1px; max-height: 220px; overflow-y: auto; padding: 0 4px; }
+  .dls-menu-convlist { display: flex; flex-direction: column; gap: 1px; max-height: 220px; overflow-y: auto; padding: 0 4px 0 6px; }
+  /* Recent-chats rows as bullet points in the menu. */
+  .dls-menu-convlist .dls-conv-item { position: relative; padding-left: 18px; }
+  .dls-menu-convlist .dls-conv-item::before {
+    content: "•"; position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+    color: var(--dls-muted); font-size: 14px; line-height: 1;
+  }
 
   /* Full-screen expanded layout (ChatGPT-style): panel fills the viewport, the
      rail appears on the left, and the thread/composer center for readability. */
