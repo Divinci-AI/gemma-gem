@@ -284,64 +284,148 @@ export function createRobot(container: HTMLElement, colors: Partial<RobotColors>
 
   scene.add(root);
 
-  // --- idle signals: a light periodic fidget keeps it alive ---
-  let fidgetUntil = 0;
-  let fidgetSeed = 0;
+  // --- interaction signals (ported from useRobotSignals) ---
+  // The robot can't observe the parent page's pointer/keys from inside this
+  // iframe, so the content script FORWARDS them as window messages
+  // ({__divinciRobot, kind:'gaze'|'react'|'focus'|'blur', x, y}); we resolve
+  // them into the same gaze/react/fidget signals the SDK robot uses.
+  const sig = { lookX: 0, lookY: 0, reactUntil: 0, reactSeed: 0, fidgetUntil: 0, fidgetSeed: 0 };
+  const mouse = { x: 0, y: 0, at: -10 };
+  const focus = { x: 0, y: 0, active: false };
+  let nextFidget = 5;
   const heartColor = new THREE.Color();
+  const clamp1 = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(-1, Math.min(1, v)) : 0);
+
+  function onSignal(e: MessageEvent): void {
+    const d = e.data as { __divinciRobot?: boolean; kind?: string; x?: number; y?: number };
+    if (!d || d.__divinciRobot !== true) return;
+    const nowS = performance.now() / 1000;
+    switch (d.kind) {
+      case "gaze":
+        mouse.x = clamp1(d.x);
+        mouse.y = clamp1(d.y);
+        mouse.at = nowS;
+        break;
+      case "react":
+        sig.reactUntil = nowS + 0.5 + Math.random() * 0.3;
+        sig.reactSeed = Math.random();
+        break;
+      case "focus":
+        focus.x = clamp1(d.x);
+        focus.y = clamp1(d.y);
+        focus.active = true;
+        break;
+      case "blur":
+        focus.active = false;
+        break;
+    }
+  }
+  window.addEventListener("message", onSignal);
 
   let raf = 0;
-  let last = performance.now();
   function tick(): void {
     raf = requestAnimationFrame(tick);
     const now = performance.now();
     const t = now / 1000;
-    const dt = Math.min((now - last) / 1000, 0.05);
-    last = now;
+    const dt = 0.016;
 
-    if (t > fidgetUntil + 2 && Math.random() < 0.004) {
-      fidgetUntil = t + 1.4;
-      fidgetSeed = Math.random();
+    // Resolve attention target by recency: recent mouse > focused field > user.
+    let tx = 0;
+    let ty = 0;
+    if (t - mouse.at < 2.5) {
+      tx = mouse.x;
+      ty = mouse.y;
+    } else if (focus.active) {
+      tx = focus.x;
+      ty = focus.y;
     }
-    const fidgeting = t < fidgetUntil;
-    const fs = fidgetSeed;
+    sig.lookX += (tx - sig.lookX) * 0.08;
+    sig.lookY += (ty - sig.lookY) * 0.08;
+    // Idle fidget scheduling (~every 6–14s when not reacting), fresh seed each.
+    if (t > nextFidget && t > sig.reactUntil) {
+      sig.fidgetUntil = t + 1.4 + Math.random() * 0.8;
+      sig.fidgetSeed = Math.random();
+      nextFidget = t + 6 + Math.random() * 8;
+    }
 
-    // Root: gentle bob + slow auto-rotate (showcase) + tiny fidget tilt.
-    inner.position.y = -0.78 + Math.sin(t * 1.6) * 0.035;
-    root.rotation.y += dt * 0.5;
-    root.rotation.z = damp(root.rotation.z, fidgeting ? Math.sin(t * 2.5) * 0.05 : 0, 6, dt);
+    const reacting = t < sig.reactUntil;
+    const fidgeting = t < sig.fidgetUntil;
+    const rs = sig.reactSeed;
+    const fs = sig.fidgetSeed;
+    const reactStyle = Math.floor(rs * 3); // 0 arm-heavy, 1 foot-heavy, 2 full
+    const fidgetStyle = Math.floor(fs * 4); // 0 glance, 1 antenna, 2 foot, 3 arm
 
-    // Head: face forward (counters body yaw), gentle nod + blink.
-    head.rotation.y = damp(head.rotation.y, -BASE_BODY_YAW, 6, dt);
-    head.rotation.x = damp(head.rotation.x, 0.09, 6, dt);
+    // Root: bob + body-lean toward the gaze + springy react scale + playful tilt.
+    const bobSpeed = reacting ? 9 : 1.6;
+    const bobAmp = reacting ? 0.13 : fidgeting ? 0.07 : 0.035;
+    root.position.y = Math.sin(t * bobSpeed) * bobAmp;
+    const targetScale = reacting ? 1 + Math.abs(Math.sin(t * 8)) * 0.05 : 1;
+    root.scale.setScalar(damp(root.scale.x, targetScale, 7, dt));
+    root.rotation.y = damp(root.rotation.y, BASE_BODY_YAW + sig.lookX * 0.1, 5, dt);
+    const tilt = reacting ? Math.sin(t * 9) * 0.12 : fidgeting ? Math.sin(t * 2.5) * 0.06 : 0;
+    root.rotation.z = damp(root.rotation.z, tilt, 6, dt);
+
+    // Head: leads the gaze + nods; eyes dart + blink.
+    const glance = fidgeting && fidgetStyle === 0 ? (fs - 0.5) * 0.2 * Math.sin(t * 1.4) : 0;
+    const gaze = Math.max(-0.6, Math.min(0.6, sig.lookX)) * 0.34;
+    head.rotation.y = damp(head.rotation.y, -BASE_BODY_YAW + gaze + glance, 6, dt);
+    head.rotation.x = damp(head.rotation.x, 0.09 - sig.lookY * 0.24, 6, dt);
     const bt = t % 3.6;
     const blink = bt < 0.13 ? 1 - Math.sin((bt / 0.13) * Math.PI) * 0.92 : 1;
+    const dartX = sig.lookX * 0.045;
+    const dartY = -sig.lookY * 0.03;
+    eyeL.position.x = -0.27 + dartX;
+    eyeL.position.y = dartY;
     eyeL.scale.y = blink;
+    eyeR.position.x = 0.27 + dartX;
+    eyeR.position.y = dartY;
     eyeR.scale.y = blink;
 
-    // Antennae sway.
+    // Antennae: pendulum sway, bigger on react / antenna-fidget.
     for (const { grp, side } of antennae) {
-      const amp = fidgeting ? 0.26 + fs * 0.12 : 0.13;
-      const spd = 2.2 + (fidgeting ? fs * 2 : 0);
-      grp.rotation.z = Math.sin(t * spd + side) * amp;
+      const amp = reacting
+        ? 0.32 + rs * 0.3
+        : fidgeting
+          ? (fidgetStyle === 1 ? 0.3 : 0.12) + fs * 0.08
+          : 0.13;
+      const spd = 2.2 + (reacting ? rs * 3 : 0);
+      const phase = side + (reacting ? rs * 6 : 0);
+      grp.rotation.z = Math.sin(t * spd + phase) * amp;
     }
 
-    // Arms drift; feet rest (light shuffle on fidget).
+    // Arms swing from the shoulder; feet tap-dance — seed-/style-weighted.
     for (const { arm, foot, side } of limbs) {
-      const armTarget = fidgeting ? Math.sin(t * (2.4 + fs * 2) + fs * 6 + side) * (0.12 + fs * 0.12) : Math.sin(t * 1.4 + side) * 0.05;
+      let armTarget = Math.sin(t * 1.4 + side) * 0.05;
+      if (reacting) {
+        const wgt = reactStyle === 0 ? 1.3 : reactStyle === 1 ? 0.4 : 0.95;
+        armTarget = Math.sin(t * (8 + rs * 5) + rs * 7 + side) * (0.3 + rs * 0.25) * wgt;
+      } else if (fidgeting) {
+        const wgt = fidgetStyle === 3 ? 1 : 0.3;
+        armTarget = Math.sin(t * (2.4 + fs * 2) + fs * 6 + side) * (0.12 + fs * 0.15) * wgt;
+      }
       arm.rotation.z = damp(arm.rotation.z, armTarget, 9, dt);
-      const phase = side > 0 ? 0 : Math.PI;
-      const tap = fidgeting ? Math.max(0, Math.sin(t * (3.5 + fs * 2) + phase)) * (0.05 + fs * 0.04) : 0;
+
+      const fphase = side > 0 ? 0 : Math.PI;
+      let tap = 0;
+      if (reacting) {
+        const wgt = reactStyle === 1 ? 1.4 : reactStyle === 0 ? 0.4 : 0.95;
+        tap = Math.max(0, Math.sin(t * (9 + rs * 5) + fphase + rs * 4)) * (0.1 + rs * 0.08) * wgt;
+      } else if (fidgeting) {
+        const wgt = fidgetStyle === 2 ? 1 : 0.25;
+        tap = Math.max(0, Math.sin(t * (3.5 + fs * 2) + fphase)) * (0.06 + fs * 0.05) * wgt;
+      }
       foot.position.y = -0.92 + tap;
       foot.rotation.x = -tap * 1.2;
     }
 
-    // Heart: brand color phase + gentle pulse.
+    // Heart: brand color phase + pulse + bounce on reactions.
     const phase = Math.sin((t * 2 * Math.PI) / 6);
     heartColor.setHSL((0.89 + 0.11 * phase) % 1, 0.7, 0.56);
     heartMat.color.copy(heartColor);
     heartMat.emissive.copy(heartColor);
-    const pulse = 1 + 0.05 * Math.sin(t * 2.4);
+    const pulse = 1 + (reacting ? 0.2 : 0.05) * Math.sin(t * (reacting ? 9 : 2.4));
     heart.scale.set(heartScale * pulse, heartScale * heartStretchY * pulse, heartScale * pulse);
+    heart.position.y = -0.06 + (reacting ? Math.abs(Math.sin(t * 9)) * 0.06 : 0);
 
     renderer.render(scene, camera);
   }
@@ -361,6 +445,7 @@ export function createRobot(container: HTMLElement, colors: Partial<RobotColors>
   return {
     dispose() {
       cancelAnimationFrame(raf);
+      window.removeEventListener("message", onSignal);
       ro.disconnect();
       geos.forEach((g) => g.dispose());
       bodyMaterial.dispose();

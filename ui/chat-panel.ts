@@ -297,13 +297,63 @@ export function mountChatPanel(
   // (robot.html) so three.js loads lazily, only when the empty state first
   // appears, never in the base content script. Loaded once per panel.
   let robotLoaded = false
+  let robotForwardCleanup: (() => void) | null = null
   function ensureRobotLoaded(): void {
     if (robotLoaded) return
     robotLoaded = true
     try {
+      // Forward page pointer / keystroke / focus into the cross-origin robot
+      // iframe (it can't observe the parent page) so the mascot's gaze + react
+      // animations work, matching the SDK site. Started once the iframe loads.
+      el.emptyRobot.addEventListener('load', setupRobotForwarding, { once: true })
       el.emptyRobot.src = chrome.runtime.getURL('robot.html')
     } catch {
       el.emptyRobot.style.display = 'none'
+    }
+  }
+
+  function setupRobotForwarding(): void {
+    const frame = el.emptyRobot
+    let extOrigin = '*'
+    try {
+      extOrigin = new URL(chrome.runtime.getURL('')).origin
+    } catch {
+      /* keep '*' */
+    }
+    const post = (msg: Record<string, unknown>): void => {
+      try {
+        frame.contentWindow?.postMessage({ __divinciRobot: true, ...msg }, extOrigin)
+      } catch {
+        /* iframe gone */
+      }
+    }
+    const norm = (px: number, py: number): [number, number] => [
+      (px / window.innerWidth) * 2 - 1,
+      (py / window.innerHeight) * 2 - 1,
+    ]
+    const onMove = (e: MouseEvent): void => {
+      const [x, y] = norm(e.clientX, e.clientY)
+      post({ kind: 'gaze', x, y })
+    }
+    const onKey = (): void => post({ kind: 'react' })
+    const onFocusIn = (e: FocusEvent): void => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) {
+        const r = t.getBoundingClientRect()
+        const [x, y] = norm(r.left + r.width / 2, r.top + r.height / 2)
+        post({ kind: 'focus', x, y })
+      }
+    }
+    const onFocusOut = (): void => post({ kind: 'blur' })
+    window.addEventListener('mousemove', onMove, { passive: true })
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('focusin', onFocusIn)
+    window.addEventListener('focusout', onFocusOut)
+    robotForwardCleanup = () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('focusin', onFocusIn)
+      window.removeEventListener('focusout', onFocusOut)
     }
   }
 
@@ -2628,6 +2678,7 @@ export function mountChatPanel(
       }
       port = null
       pageWebMcp?.dispose()
+      robotForwardCleanup?.()
     },
   }
 }
