@@ -47,6 +47,7 @@ import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
 import { STORAGE_KEY_SITE_CONFIGS, resolveLocalized, type SiteReleaseConfig, type SiteConfigMap, type SiteThemeConfig } from '@/shared/release-config'
 import { PageWebMcpBridge, WEBMCP_BRIDGE_NS } from '@/shared/webmcp-consumer'
+import { detectDivinciEmbed } from '@/shared/divinci-embed-detect'
 import type { ChatTool, ChatToolCall } from '@/shared/messages'
 import { toggleMcpId, releaseEditAction, forkTitleFor } from '@/shared/mcp-release'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
@@ -1023,7 +1024,31 @@ export function mountChatPanel(
       renderDisclaimer()
       // Origin may have changed → re-resolve the site config (Phase 6).
       void loadSiteConfig()
+      // A page-native Divinci widget may have (un)mounted across nav.
+      applyEmbedDeference()
     }, 300)
+  }
+
+  // ---- Defer to a page-native Divinci widget ------------------------------
+  // If the page already hosts a Divinci embed / release widget, stand down: hide
+  // our launcher (and close the panel) so there's only one assistant. The page's
+  // widget can route to local Gemma via the window.divinci API we still inject.
+  // Overlay-only — the standalone panel page has no launcher and is the panel.
+  let deferredToEmbed = false
+  function applyEmbedDeference(): void {
+    if (disposed || deps.mode !== 'overlay') return
+    const present = !!detectDivinciEmbed(document)
+    if (present === deferredToEmbed) return
+    deferredToEmbed = present
+    if (present) {
+      el.launcher.hidden = true
+      if (root.classList.contains('dls-open')) setOpen(false, false)
+    } else {
+      // No widget anymore → restore the launcher unless the user hid it manually.
+      void chrome.storage.local.get(STORAGE_KEY_HANDLE_HIDDEN).then((s) => {
+        el.launcher.hidden = s[STORAGE_KEY_HANDLE_HIDDEN] === true
+      })
+    }
   }
 
   function applyStatus(status: InternalStatusResponse): void {
@@ -2583,7 +2608,7 @@ export function mountChatPanel(
     if (STORAGE_KEY_SETTINGS in changes) void refreshPageReadingSetting()
     // Live show/hide the handle when toggled from the popup.
     if (STORAGE_KEY_HANDLE_HIDDEN in changes) {
-      el.launcher.hidden = changes[STORAGE_KEY_HANDLE_HIDDEN].newValue === true
+      el.launcher.hidden = changes[STORAGE_KEY_HANDLE_HIDDEN].newValue === true || deferredToEmbed
     }
     // Global-mode flipped in another tab → adopt it + reload this context's
     // active conversation so the model genuinely follows across tabs.
@@ -2621,6 +2646,11 @@ export function mountChatPanel(
 
   // ---- Navigation detection ------------------------------------------------
   setupNavigationDetection()
+
+  // Defer to a page-native Divinci widget if present. The embed loads async, so
+  // re-check on a few short delays after mount (then nav handles later changes).
+  applyEmbedDeference()
+  for (const delay of [600, 1800, 4000]) window.setTimeout(applyEmbedDeference, delay)
 
   // ---- Initial paint ------------------------------------------------------
   renderModelState()
