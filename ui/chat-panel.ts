@@ -182,6 +182,7 @@ export function mountChatPanel(
     accountAvatar: root.querySelector<HTMLImageElement>('.dls-account-avatar')!,
     accountFallback: root.querySelector<HTMLElement>('.dls-account-fallback')!,
     accountLabel: root.querySelector<HTMLElement>('.dls-account-label')!,
+    accountSub: root.querySelector<HTMLElement>('.dls-account-sub')!,
     loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
     loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
     loadHint: root.querySelector<HTMLElement>('.dls-load-hint')!,
@@ -212,6 +213,10 @@ export function mountChatPanel(
   let port: chrome.runtime.Port | null = null
   let isLoaded = false
   let isLoading = false
+  // One-shot: auto-load a remembered + on-disk model when the panel finds it
+  // unloaded (e.g. after MV3 evicted the SW + offscreen). Cache-load only — never
+  // a surprise download. See maybeAutoLoadModel.
+  let autoLoadAttempted = false
   // Whether the in-flight load is reading cached weights (no network). Drives
   // the "Loading from cache" vs "Downloading model" progress label.
   let loadFromCache = false
@@ -729,25 +734,30 @@ export function mountChatPanel(
   function renderAccountChip(resp: InternalDivinciAuthStatusResponse): void {
     accountSignedIn = Boolean(resp.signedIn)
     if (!resp.signedIn) {
-      // Signed-out: compact "Local only" pill, no avatar.
+      // Signed-out: a real sign-in CTA row (avatar slot shows a person glyph).
       el.accountChip.dataset.state = 'signed-out'
       el.accountAvatar.hidden = true
       el.accountAvatar.removeAttribute('src')
-      el.accountFallback.hidden = true
+      el.accountFallback.hidden = false
+      el.accountFallback.textContent = '👤'
       el.accountLabel.hidden = false
-      el.accountLabel.textContent = 'Local only'
+      el.accountLabel.textContent = 'Sign in to Divinci'
+      el.accountSub.hidden = false
+      el.accountSub.textContent = 'Use your account models & sync chats'
       el.accountChip.title = 'Sign in via the Divinci Local popup'
       userAvatarUrl = null
       userInitial = '·'
       refreshUserAvatars()
       return
     }
-    // Signed-in: show JUST the avatar circle (matches the popup dropdown),
-    // email moves to the tooltip. Falls back to an initial circle when the
-    // id_token carried no picture.
+    // Signed-in: avatar + name + email on a full-width row (the menu has space).
     el.accountChip.dataset.state = 'signed-in'
     el.accountChip.title = resp.email || 'Signed in'
-    el.accountLabel.hidden = true
+    const displayName = resp.name?.trim() || resp.email?.trim()?.split('@')[0] || 'Signed in'
+    el.accountLabel.hidden = false
+    el.accountLabel.textContent = displayName
+    el.accountSub.hidden = false
+    el.accountSub.textContent = resp.email || ''
     const initial = (resp.name?.trim() || resp.email?.trim() || '?').charAt(0).toUpperCase()
     userAvatarUrl = resp.picture || null
     userInitial = initial
@@ -952,6 +962,30 @@ export function mountChatPanel(
       renderProgress(bytesLoaded, bytesTotal, loadFromCache)
     }
     renderModelState()
+    void maybeAutoLoadModel(status)
+  }
+
+  /**
+   * After the MV3 SW is evicted (~30s idle) the offscreen doc + model are torn
+   * down; the next page interaction restarts the SW but the model is cold. The
+   * SW-side auto-warm covers the restart path; this covers the panel-open path:
+   * if the model is unloaded but ALREADY downloaded (cached) AND the user opted
+   * into it before (STORAGE_KEY_MODEL set — cleared on an explicit Unload), load
+   * it from cache automatically. Cache-load only → never a surprise 3 GB fetch,
+   * and an explicit Unload is respected. One attempt per panel session.
+   */
+  async function maybeAutoLoadModel(status: InternalStatusResponse): Promise<void> {
+    if (autoLoadAttempted || isLoaded || isLoading) return
+    if (!status.cacheBreakdown?.[MODEL_ID]?.isCached) return
+    try {
+      const stored = await chrome.storage.local.get(STORAGE_KEY_MODEL)
+      if (stored[STORAGE_KEY_MODEL] !== MODEL_ID) return // not opted in / explicitly unloaded
+    } catch {
+      return
+    }
+    if (autoLoadAttempted || isLoaded || isLoading) return // re-check after the await
+    autoLoadAttempted = true
+    loadModel()
   }
 
   // ---- Port event handling ------------------------------------------------
@@ -2593,9 +2627,12 @@ const TEMPLATE = /* html */ `
           </button>
           <div class="dls-menu" hidden role="menu">
             <button class="dls-account-chip dls-menu-account" data-state="signed-out" type="button" title="Divinci account">
-              <img class="dls-account-avatar" alt="" width="22" height="22" hidden />
+              <img class="dls-account-avatar" alt="" width="28" height="28" hidden />
               <span class="dls-account-fallback" hidden></span>
-              <span class="dls-account-label">Local only</span>
+              <span class="dls-account-text">
+                <span class="dls-account-label">Sign in to Divinci</span>
+                <span class="dls-account-sub">Use your account models &amp; sync chats</span>
+              </span>
             </button>
             <div class="dls-menu-sep"></div>
             <div class="dls-menu-modes" role="group" aria-label="Panel display mode">
@@ -3052,13 +3089,23 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-rail { display: none; }
   .dls-conv-empty { color: var(--dls-muted); font-size: 12px; padding: 8px 4px; }
 
-  /* Account chip relocated into the hamburger menu — render as a full-width row. */
+  /* Account chip relocated into the hamburger menu — full-width row, avatar +
+     name + email (two lines), so the row isn't just a lone avatar. */
   .dls-menu .dls-account-chip.dls-menu-account {
-    width: 100%; display: flex; align-items: center; gap: 8px;
+    width: 100%; display: flex; align-items: center; gap: 10px;
     padding: 8px 10px; border-radius: 8px; border: none; background: none;
     color: var(--dls-text); cursor: pointer; font: inherit; text-align: left;
   }
   .dls-menu .dls-account-chip.dls-menu-account:hover { background: var(--dls-bg); }
+  .dls-menu-account .dls-account-avatar,
+  .dls-menu-account .dls-account-fallback {
+    width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--dls-bg); font-size: 14px;
+  }
+  .dls-menu-account .dls-account-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+  .dls-menu-account .dls-account-label { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dls-menu-account .dls-account-sub { font-size: 11px; color: var(--dls-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Recent-chats section inside the menu (narrow modes' history surface). */
   .dls-menu-section-label {
