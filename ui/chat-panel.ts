@@ -155,6 +155,8 @@ export function mountChatPanel(
   const el = {
     launcher: root.querySelector<HTMLButtonElement>('.dls-launcher')!,
     menuBtn: root.querySelector<HTMLButtonElement>('.dls-menu-btn')!,
+    historyBtn: root.querySelector<HTMLButtonElement>('.dls-history-btn')!,
+    convEmpty: root.querySelector<HTMLElement>('.dls-conv-empty')!,
     menu: root.querySelector<HTMLElement>('.dls-menu')!,
     modeOverlay: root.querySelector<HTMLButtonElement>('.dls-mode-overlay')!,
     modeDock: root.querySelector<HTMLButtonElement>('.dls-mode-dock')!,
@@ -528,6 +530,7 @@ export function mountChatPanel(
         const b = appendBubble('user', m.content)
         void persistMessage('user', m.content).then((id) => stampMsgId(b, id))
         renderStarters() // first user turn → hide starters
+        updateNewChatVisibility() // now non-fresh → New chat available
       },
       onAssistantStart: () => {
         streamingBubble = appendBubble('assistant', '…')
@@ -1151,6 +1154,7 @@ export function mountChatPanel(
     el.messages.querySelectorAll('.dls-row').forEach((b) => b.remove())
     el.empty.hidden = messages.length > 0
     renderStarters()
+    updateNewChatVisibility()
     for (const m of messages) {
       if (m.role === 'system') continue
       const stored = m as StoredMessage
@@ -1173,6 +1177,7 @@ export function mountChatPanel(
     const msgs: CoreChatMessage[] = conv.messages.map((m) => ({ role: m.role, content: m.content }))
     controller.setHistory(msgs)
     renderThread(conv.messages)
+    toggleHistory(false) // chose a chat → close the history overlay
     void renderConvList()
   }
 
@@ -1279,6 +1284,7 @@ export function mountChatPanel(
   async function renderConvList(): Promise<void> {
     const items = await store.list()
     el.convList.replaceChildren()
+    el.convEmpty.hidden = items.length > 0
     for (const it of items) {
       const item = document.createElement('div')
       item.className = 'dls-conv-item' + (it.id === activeConversationId ? ' is-active' : '')
@@ -1342,6 +1348,7 @@ export function mountChatPanel(
       // Refresh the menu items' live state when it opens.
       renderGlobalModeToggle()
       highlightModeRow()
+      updateNewChatVisibility()
       void refreshShareLinkState()
     }
   }
@@ -2185,6 +2192,31 @@ export function mountChatPanel(
     toggleMenu(false)
     newChat()
   })
+
+  // "New chat" is meaningless when the current thread is already fresh (the user
+  // hasn't sent anything yet) — hide both surfaces in that case.
+  function isFreshChat(): boolean {
+    return !el.messages.querySelector('.dls-row-user')
+  }
+  function updateNewChatVisibility(): void {
+    const fresh = isFreshChat()
+    el.newChatBtn.hidden = fresh
+    el.menuNewChat.hidden = fresh
+  }
+
+  // Chat history overlay: in narrow (overlay/dock) mode the conversation rail is
+  // hidden, so a header button slides it in over the messages. In expanded mode
+  // the rail is always docked, so the button is hidden (CSS).
+  function toggleHistory(open?: boolean): void {
+    const next = open ?? !root.classList.contains('dls-show-history')
+    root.classList.toggle('dls-show-history', next)
+    el.historyBtn.setAttribute('aria-expanded', String(next))
+    if (next) void renderConvList()
+  }
+  el.historyBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    toggleHistory()
+  })
   // Hamburger menu (global / full-screen / share) — open/close.
   el.menuBtn.addEventListener('click', (e) => {
     e.stopPropagation()
@@ -2505,6 +2537,11 @@ const TEMPLATE = /* html */ `
         </button>
       </div>
       <div class="dls-header-actions">
+        <button class="dls-history-btn" type="button" aria-label="Chat history" title="Previous chats" aria-expanded="false">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 2M3.05 11a9 9 0 1 1 .5 4M3 4v5h5"/>
+          </svg>
+        </button>
         <div class="dls-menu-wrap">
           <button class="dls-menu-btn" type="button" aria-label="Menu" aria-haspopup="true" aria-expanded="false">
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -2576,6 +2613,7 @@ const TEMPLATE = /* html */ `
     <div class="dls-body">
       <nav class="dls-rail" aria-label="Conversations">
         <button class="dls-new-chat" type="button">+ New chat</button>
+        <div class="dls-conv-empty" hidden>No previous chats yet.</div>
         <div class="dls-conv-list"></div>
       </nav>
 
@@ -2954,10 +2992,28 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-tools-check-row input { cursor: pointer; }
   .dls-tools-check-row.dls-disabled { opacity: 0.5; cursor: default; }
 
-  /* Body splits into the conversation rail (expanded only) + the main column. */
-  .dls-body { display: flex; flex: 1; min-height: 0; }
+  /* Body splits into the conversation rail (expanded only) + the main column.
+     position:relative anchors the narrow-mode history overlay. */
+  .dls-body { display: flex; flex: 1; min-height: 0; position: relative; }
   .dls-main { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
   .dls-rail { display: none; }
+  .dls-conv-empty { color: var(--dls-muted); font-size: 12px; padding: 8px 4px; }
+
+  /* Header chat-history button (narrow modes only — expanded docks the rail). */
+  .dls-history-btn {
+    background: none; border: none; color: var(--dls-muted); cursor: pointer;
+    padding: 4px; display: flex; align-items: center; border-radius: 6px;
+  }
+  .dls-history-btn:hover { color: var(--dls-text); background: var(--dls-bg); }
+  .dls-root.dls-expanded .dls-history-btn { display: none; }
+
+  /* Narrow (overlay/dock) mode: the rail slides over the messages as a history
+     panel when toggled, so users can pick a previous chat without full-screen. */
+  .dls-root.dls-show-history:not(.dls-expanded) .dls-rail {
+    display: flex; flex-direction: column; gap: 6px;
+    position: absolute; inset: 0; z-index: 6;
+    background: var(--dls-bg-2); padding: 10px; overflow-y: auto;
+  }
 
   /* Full-screen expanded layout (ChatGPT-style): panel fills the viewport, the
      rail appears on the left, and the thread/composer center for readability. */
