@@ -162,22 +162,27 @@ describe('buildSiteThemeUrl', () => {
 })
 
 describe('parseSiteThemeResponse', () => {
-  it('maps a server ThemeConfig to an accent from primary', () => {
+  it('maps the audited button pair (buttonBg + buttonText) to accent + accentText', () => {
     const body = JSON.stringify({
       host: 'www.drfuhrman.com',
       themed: true,
-      theme: { preset: 'custom', colors: { primary: '#457200', buttonBg: '#457200', accent: '#0066cc' } },
+      theme: { preset: 'custom', colors: { primary: '#457200', buttonBg: '#457200', buttonText: '#ffffff', accent: '#0066cc' } },
       sourceUrl: 'https://www.drfuhrman.com/',
     })
     const r = parseSiteThemeResponse(body)
     expect(r).toEqual({
       host: 'www.drfuhrman.com',
-      theme: { preset: 'custom', accent: '#457200' },
+      theme: { preset: 'custom', accent: '#457200', accentText: '#ffffff' },
       sourceUrl: 'https://www.drfuhrman.com/',
     })
   })
 
-  it('falls back primary → buttonBg → accent', () => {
+  it('omits accentText when buttonBg is absent (no audited pair → fall back to primary)', () => {
+    const r = parseSiteThemeResponse(JSON.stringify({ host: 'h', theme: { colors: { primary: '#123456', buttonText: '#ffffff' } } }))
+    expect(r?.theme).toEqual({ preset: 'custom', accent: '#123456' })
+  })
+
+  it('falls back buttonBg → primary → accent', () => {
     const r = parseSiteThemeResponse(JSON.stringify({ host: 'h', theme: { colors: { accent: '#abcdef' } } }))
     expect(r?.theme).toEqual({ preset: 'custom', accent: '#abcdef' })
   })

@@ -20,6 +20,7 @@ import { log } from '@/shared/logger'
 import { authedFetch, isSignedIn } from '@/background/divinci-auth'
 import { sanitizeUrlForIndex } from '@/shared/url-policy'
 import { STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
+import type { SiteThemeConfig } from '@/shared/release-config'
 import {
   buildPageStatusUrl,
   parsePageStatusResponse,
@@ -227,32 +228,68 @@ async function handlePageContext(
   }
 }
 
+// Per-host theme cache (chrome.storage.session — survives SW restarts, cleared
+// on browser restart). Avoids refetching a host's theme on every panel-open and
+// spares the shared 60/min www-rag rate limit. Caches negative results too, so an
+// untracked host doesn't refetch every landing. TTL trades rebrand-freshness for
+// load; one browser session is a reasonable window (a full restart re-fetches).
+const THEME_CACHE_TTL_MS = 6 * 60 * 60 * 1000 // 6h
+const themeCacheKey = (host: string) => `wwwrag-theme-cache:${host}`
+
+async function readThemeCache(host: string): Promise<SiteThemeConfig | null | undefined> {
+  try {
+    const key = themeCacheKey(host)
+    const got = await chrome.storage.session.get(key)
+    const entry = got[key] as { theme: SiteThemeConfig | null; ts: number } | undefined
+    if (entry && typeof entry.ts === 'number' && Date.now() - entry.ts < THEME_CACHE_TTL_MS) {
+      return entry.theme // may be null (cached "untracked")
+    }
+  } catch {
+    /* storage.session unavailable → no cache */
+  }
+  return undefined // miss
+}
+
+async function writeThemeCache(host: string, theme: SiteThemeConfig | null): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [themeCacheKey(host)]: { theme, ts: Date.now() } })
+  } catch {
+    /* ignore cache write failures */
+  }
+}
+
 /**
  * Fetch the crawled per-host brand theme so the panel can blend into the site.
  * Read-only and best-effort: ANY failure (signed-out, not-configured, rate-limit,
  * untracked host, unparseable body) resolves `ok:true, theme:null` so the panel
  * simply keeps its default accent — a missing theme is never an error to the user.
+ * Served from a per-host session cache when fresh.
  */
 async function handleSiteTheme(req: InternalSiteThemeRequest): Promise<InternalSiteThemeResponse> {
   const host = (req.host || '').trim().toLowerCase()
-  const none = (): InternalSiteThemeResponse => ({
+  const ok = (theme: SiteThemeConfig | null): InternalSiteThemeResponse => ({
     type: 'internal:site-theme-response',
     ok: true,
     host,
-    theme: null,
+    theme,
   })
   // Conservative hostname check (labels + dots) — never send junk to the server.
-  if (!host || !/^[a-z0-9.-]+$/.test(host) || host.length > 253) return none()
+  if (!host || !/^[a-z0-9.-]+$/.test(host) || host.length > 253) return ok(null)
+
+  // Cache hit (incl. cached "untracked" null) → no network.
+  const cached = await readThemeCache(host)
+  if (cached !== undefined) return ok(cached)
 
   // Theming is a cosmetic enhancement: if the user isn't signed in, just skip it
-  // (no sign-in prompt for a background styling fetch).
-  if (!(await isSignedIn())) return none()
+  // (no sign-in prompt for a background styling fetch). Don't cache — sign-in may
+  // change the answer.
+  if (!(await isSignedIn())) return ok(null)
 
   const result = await authedFetch(buildSiteThemeUrl(host))
-  if (!result.ok || result.status < 200 || result.status >= 300) return none()
+  if (!result.ok || result.status < 200 || result.status >= 300) return ok(null)
 
   const parsed = parseSiteThemeResponse(result.text)
-  if (!parsed) return none()
-
-  return { type: 'internal:site-theme-response', ok: true, host, theme: parsed.theme }
+  const theme = parsed ? parsed.theme : null
+  await writeThemeCache(host, theme)
+  return ok(theme)
 }

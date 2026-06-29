@@ -478,9 +478,17 @@ export function mountChatPanel(
     if (accent) {
       root.style.setProperty('--dls-accent', accent)
       root.style.setProperty('--dls-accent-hover', `color-mix(in srgb, ${accent} 80%, white)`)
+      // Audited text-on-accent: keeps solid-accent buttons legible when the site
+      // brand color is light (CSS default is #fff for the dark Divinci accent).
+      if (theme?.accentText) {
+        root.style.setProperty('--dls-accent-text', theme.accentText)
+      } else {
+        root.style.removeProperty('--dls-accent-text')
+      }
     } else {
       root.style.removeProperty('--dls-accent')
       root.style.removeProperty('--dls-accent-hover')
+      root.style.removeProperty('--dls-accent-text')
     }
   }
 
@@ -2780,6 +2788,10 @@ export const SIDEBAR_CSS = /* css */ `
     --dls-muted: #8b91a7;
     --dls-accent: #5865f2;
     --dls-accent-hover: #6b77f5;
+    /* Text on a solid --dls-accent surface. Default white (legible on the dark
+       Divinci accent); a per-site theme overrides this with the audited
+       buttonText so light brand accents stay legible. */
+    --dls-accent-text: #fff;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     font-size: 14px;
     color: var(--dls-text);
@@ -3078,7 +3090,7 @@ export const SIDEBAR_CSS = /* css */ `
     background: transparent; border: 1px solid var(--dls-border); border-radius: 8px;
     color: var(--dls-muted); cursor: pointer;
   }
-  .dls-tools-tab.is-active { color: #fff; background: var(--dls-accent); border-color: var(--dls-accent); }
+  .dls-tools-tab.is-active { color: var(--dls-accent-text); background: var(--dls-accent); border-color: var(--dls-accent); }
   .dls-tools-body { flex: 1; overflow-y: auto; padding: 12px 14px; }
   .dls-tools-section { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dls-muted); margin: 12px 0 6px; }
   .dls-tools-section:first-child { margin-top: 0; }
@@ -3096,7 +3108,7 @@ export const SIDEBAR_CSS = /* css */ `
     color: var(--dls-text); cursor: pointer;
   }
   .dls-tools-btn-sm:hover:not(:disabled) { border-color: var(--dls-accent); }
-  .dls-tools-btn-sm.dls-primary { background: var(--dls-accent); color: #fff; border-color: var(--dls-accent); }
+  .dls-tools-btn-sm.dls-primary { background: var(--dls-accent); color: var(--dls-accent-text); border-color: var(--dls-accent); }
   .dls-tools-btn-sm:disabled { opacity: 0.5; cursor: default; }
   .dls-tools-form { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
   .dls-tools-input {
@@ -3206,7 +3218,7 @@ export const SIDEBAR_CSS = /* css */ `
     border-radius: 8px;
     border: 1px solid var(--dls-border);
     background: var(--dls-accent);
-    color: #fff;
+    color: var(--dls-accent-text);
     cursor: pointer;
     margin-bottom: 6px;
   }
@@ -3426,7 +3438,7 @@ export const SIDEBAR_CSS = /* css */ `
   }
   .dls-bubble-user {
     background: var(--dls-accent);
-    color: #fff;
+    color: var(--dls-accent-text);
     border-bottom-right-radius: 4px;
   }
   .dls-bubble-assistant {
@@ -3516,7 +3528,7 @@ export const SIDEBAR_CSS = /* css */ `
     cursor: pointer;
   }
   .dls-mic:hover { color: var(--dls-text); border-color: var(--dls-accent); }
-  .dls-mic.dls-listening { color: #fff; background: var(--dls-accent); border-color: var(--dls-accent); animation: dls-dot-pulse 1.2s ease-in-out infinite; }
+  .dls-mic.dls-listening { color: var(--dls-accent-text); background: var(--dls-accent); border-color: var(--dls-accent); animation: dls-dot-pulse 1.2s ease-in-out infinite; }
   .dls-mic[hidden] { display: none; }
 
   /* AI-safety disclaimer — always visible above the page-reading note. */
@@ -3621,7 +3633,7 @@ export const SIDEBAR_CSS = /* css */ `
     font-weight: 600;
     cursor: pointer;
     background: var(--dls-accent);
-    color: #fff;
+    color: var(--dls-accent-text);
   }
   .dls-send:hover:not(:disabled) { background: var(--dls-accent-hover); }
   .dls-send:disabled { opacity: 0.5; cursor: default; }

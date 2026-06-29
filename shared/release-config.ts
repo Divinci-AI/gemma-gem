@@ -35,8 +35,12 @@ const MAX_LANG_LEN = 35; // generous BCP-47 (e.g. "zh-Hans-CN")
 export interface SiteThemeConfig {
   /** A named web preset, or "custom" with colors. Free-form; the panel maps known ones. */
   preset?: string;
-  /** Accent / primary color (validated as a CSS hex). */
+  /** Accent / primary color (validated as a CSS hex). The panel's brand color. */
   accent?: string;
+  /** Legible text color ON the accent (the WCAG-AA-audited buttonText pairing).
+   *  Lets the panel's solid-accent buttons stay legible when `accent` is light
+   *  (a light brand CTA would fail the panel's default white-on-accent). */
+  accentText?: string;
 }
 
 /** Per-language overrides for the greeting + starters (keyed by BCP-47 code). */
@@ -128,10 +132,13 @@ function cleanTheme(v: unknown): SiteThemeConfig | undefined {
   const o = v as Record<string, unknown>;
   const preset = cleanString(o.preset, 40);
   const accent = cleanHexColor(o.accent ?? (o.colors as { accent?: unknown } | undefined)?.accent);
+  const accentText = cleanHexColor(o.accentText ?? (o.colors as { buttonText?: unknown } | undefined)?.buttonText);
   if (!preset && !accent) return undefined;
   const theme: SiteThemeConfig = {};
   if (preset) theme.preset = preset;
   if (accent) theme.accent = accent;
+  // accentText only meaningful alongside a hex accent.
+  if (accent && accentText) theme.accentText = accentText;
   return theme;
 }
 

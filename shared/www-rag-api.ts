@@ -200,10 +200,17 @@ export function parseSiteThemeResponse(text: string): SiteThemeResponse | null {
   }
   const colors = (serverTheme as { colors?: unknown }).colors
   const c = (colors && typeof colors === 'object' ? colors : {}) as Record<string, unknown>
-  const accent = safeHex(c.primary) ?? safeHex(c.buttonBg) ?? safeHex(c.accent)
+  // Prefer the audited button pair (buttonBg + buttonText): buttonText is
+  // WCAG-AA-checked AGAINST buttonBg, so applying both keeps the panel's
+  // accent buttons legible even when the site's brand color is light. Fall back
+  // to primary/accent for the brand color (no paired text then).
+  const accent = safeHex(c.buttonBg) ?? safeHex(c.primary) ?? safeHex(c.accent)
   if (!accent) return { host, theme: null, sourceUrl }
+  const accentText = safeHex(c.buttonBg) ? safeHex(c.buttonText) : undefined
 
-  return { host, theme: { preset: 'custom', accent }, sourceUrl }
+  const theme: SiteThemeConfig = { preset: 'custom', accent }
+  if (accentText) theme.accentText = accentText
+  return { host, theme, sourceUrl }
 }
 
 // ---- pill-status mapping ----
