@@ -18,6 +18,7 @@
  */
 
 import { DIVINCI_API_BASE } from './divinci-account'
+import type { SiteThemeConfig } from './release-config'
 
 // ---- page-status (GET) ----
 
@@ -142,6 +143,67 @@ export function parsePageContextResponse(text: string): PageContextResponse | nu
     })
   }
   return { url: typeof o.url === 'string' ? o.url : '', chunks }
+}
+
+// ---- site-theme (GET) ----
+
+/**
+ * Build the per-host theme URL.
+ *   GET {base}/api/v1/www-rag/theme?host=<bareHost>
+ * Returns the host's crawler-derived brand theme so the panel can blend into the
+ * site it landed on (the same SiteThemeConfig surface release templates feed).
+ */
+export function buildSiteThemeUrl(host: string): string {
+  const p = new URLSearchParams({ host })
+  return `${DIVINCI_API_BASE}/api/v1/www-rag/theme?${p.toString()}`
+}
+
+/** Parsed site-theme: a panel-ready SiteThemeConfig (or null when unthemed). */
+export interface SiteThemeResponse {
+  host: string
+  theme: SiteThemeConfig | null
+  /** The page the palette was rendered from (provenance/debug). */
+  sourceUrl?: string
+}
+
+/** #rgb / #rrggbb / #rrggbbaa only — blocks url()/expression()/javascript: when
+ *  interpolated into a style value. (The server already validated, but the
+ *  extension re-validates everything that reaches a DOM style.) */
+function safeHex(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined
+  const t = v.trim()
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(t) ? t : undefined
+}
+
+/**
+ * Safely parse a site-theme response, mapping the server's full ThemeConfig down
+ * to the panel's minimal SiteThemeConfig. The panel themes its accent only, so we
+ * extract a single brand color — the derived `primary` (from the site's CTA),
+ * falling back to `buttonBg` then `accent`. Returns `theme: null` when the host
+ * is untracked/unthemed or no usable brand color survives validation.
+ */
+export function parseSiteThemeResponse(text: string): SiteThemeResponse | null {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (typeof raw !== 'object' || raw === null) return null
+  const o = raw as Record<string, unknown>
+  const host = typeof o.host === 'string' ? o.host : ''
+  const sourceUrl = typeof o.sourceUrl === 'string' ? o.sourceUrl : undefined
+
+  const serverTheme = o.theme
+  if (!serverTheme || typeof serverTheme !== 'object') {
+    return { host, theme: null, sourceUrl }
+  }
+  const colors = (serverTheme as { colors?: unknown }).colors
+  const c = (colors && typeof colors === 'object' ? colors : {}) as Record<string, unknown>
+  const accent = safeHex(c.primary) ?? safeHex(c.buttonBg) ?? safeHex(c.accent)
+  if (!accent) return { host, theme: null, sourceUrl }
+
+  return { host, theme: { preset: 'custom', accent }, sourceUrl }
 }
 
 // ---- pill-status mapping ----

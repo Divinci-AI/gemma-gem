@@ -19,6 +19,7 @@
  */
 
 import type { ModelId } from './models'
+import type { SiteThemeConfig } from './release-config'
 
 // ---- External protocol (web app ↔ extension via externally_connectable) ----
 
@@ -579,9 +580,28 @@ export interface InternalPageContextResponse {
   error?: string
 }
 
+/**
+ * Sidebar → SW: fetch the crawled per-host brand theme for `host` so the panel
+ * can blend into the site. Read-only; fails open (no theme → panel keeps default).
+ */
+export interface InternalSiteThemeRequest {
+  type: 'internal:site-theme'
+  host: string
+}
+
+/** SW → sidebar: the panel-ready theme (accent), or null when untracked/unthemed. */
+export interface InternalSiteThemeResponse {
+  type: 'internal:site-theme-response'
+  ok: boolean
+  host: string
+  theme: SiteThemeConfig | null
+  error?: string
+}
+
 export type InternalRequest =
   | InternalLoadRequest
   | InternalChatRequest
+  | InternalSiteThemeRequest
   | InternalAbortRequest
   | InternalStatusRequest
   | InternalUnloadRequest

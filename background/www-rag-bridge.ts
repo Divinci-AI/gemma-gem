@@ -27,12 +27,16 @@ import {
   buildPageContextBody,
   parsePageContextResponse,
   pageStatusToPill,
+  buildSiteThemeUrl,
+  parseSiteThemeResponse,
 } from '@/shared/www-rag-api'
 import type {
   InternalPageCheckRequest,
   InternalPageCheckResponse,
   InternalPageContextRequest,
   InternalPageContextResponse,
+  InternalSiteThemeRequest,
+  InternalSiteThemeResponse,
   Message,
 } from '@/shared/messages'
 
@@ -59,6 +63,22 @@ export function setupWwwRagBridge(): void {
                 ok: false,
                 url: r.url,
                 chunks: [],
+                error: err instanceof Error ? err.message : String(err),
+              }
+              sendResponse(resp)
+            })
+          return true
+        case 'internal:site-theme':
+          void handleSiteTheme(msg as InternalSiteThemeRequest)
+            .then((resp) => sendResponse(resp))
+            .catch((err: unknown) => {
+              log.error('[www-rag] site-theme error:', err)
+              const r = msg as InternalSiteThemeRequest
+              const resp: InternalSiteThemeResponse = {
+                type: 'internal:site-theme-response',
+                ok: false,
+                host: r.host,
+                theme: null,
                 error: err instanceof Error ? err.message : String(err),
               }
               sendResponse(resp)
@@ -205,4 +225,34 @@ async function handlePageContext(
     url: sanitized,
     chunks: parsed.chunks,
   }
+}
+
+/**
+ * Fetch the crawled per-host brand theme so the panel can blend into the site.
+ * Read-only and best-effort: ANY failure (signed-out, not-configured, rate-limit,
+ * untracked host, unparseable body) resolves `ok:true, theme:null` so the panel
+ * simply keeps its default accent — a missing theme is never an error to the user.
+ */
+async function handleSiteTheme(req: InternalSiteThemeRequest): Promise<InternalSiteThemeResponse> {
+  const host = (req.host || '').trim().toLowerCase()
+  const none = (): InternalSiteThemeResponse => ({
+    type: 'internal:site-theme-response',
+    ok: true,
+    host,
+    theme: null,
+  })
+  // Conservative hostname check (labels + dots) — never send junk to the server.
+  if (!host || !/^[a-z0-9.-]+$/.test(host) || host.length > 253) return none()
+
+  // Theming is a cosmetic enhancement: if the user isn't signed in, just skip it
+  // (no sign-in prompt for a background styling fetch).
+  if (!(await isSignedIn())) return none()
+
+  const result = await authedFetch(buildSiteThemeUrl(host))
+  if (!result.ok || result.status < 200 || result.status >= 300) return none()
+
+  const parsed = parseSiteThemeResponse(result.text)
+  if (!parsed) return none()
+
+  return { type: 'internal:site-theme-response', ok: true, host, theme: parsed.theme }
 }

@@ -45,7 +45,7 @@ import {
 import { STORAGE_KEY_DIVINCI_AUTH } from '@/shared/divinci-account'
 import { urlIndexDecision } from '@/shared/url-policy'
 import { contentHash } from '@/shared/content-hash'
-import { STORAGE_KEY_SITE_CONFIGS, resolveLocalized, type SiteReleaseConfig, type SiteConfigMap } from '@/shared/release-config'
+import { STORAGE_KEY_SITE_CONFIGS, resolveLocalized, type SiteReleaseConfig, type SiteConfigMap, type SiteThemeConfig } from '@/shared/release-config'
 import { PageWebMcpBridge, WEBMCP_BRIDGE_NS } from '@/shared/webmcp-consumer'
 import type { ChatTool, ChatToolCall } from '@/shared/messages'
 import { toggleMcpId, releaseEditAction, forkTitleFor } from '@/shared/mcp-release'
@@ -68,6 +68,7 @@ import type {
   InternalPageContextResponse,
   InternalDivinciAuthStatusResponse,
   InternalGetTabIdResponse,
+  InternalSiteThemeResponse,
 } from '@/shared/messages'
 
 const MODEL_ID: ModelId = DEFAULT_MODEL_ID
@@ -298,6 +299,12 @@ export function mountChatPanel(
   // theme) for the ORIGIN the overlay is on. null when the site set none. Loaded
   // from chrome.storage and kept live; standalone panel pages (no host) get none.
   let siteConfig: SiteReleaseConfig | null = null
+  // Crawler-derived per-host brand theme (WWW RAG). Applied ONLY as a fallback
+  // when the origin has no explicit site-supplied release theme — an automatic
+  // "blend into this site" accent for any crawled host. Keyed to the origin it
+  // was fetched for so a stale theme never bleeds across navigations.
+  let wwwRagTheme: SiteThemeConfig | null = null
+  let wwwRagThemeOrigin: string | null = null
 
   // Phase 7c: bridge to the page's WebMCP tools (handoff, order-status, …). Lives
   // in the ISOLATED world; talks to the MAIN-world shim (divinci-webmcp-main) over
@@ -382,6 +389,50 @@ export function mountChatPanel(
     seedWelcomeIfConfigured()
     renderStarters()
     applySiteTheme()
+    // No explicit site theme → try the crawler-derived per-host theme so the
+    // panel still blends into the site. Best-effort + async (never blocks load).
+    if (!siteConfig?.theme) {
+      void loadWwwRagTheme(origin)
+    } else {
+      wwwRagTheme = null
+      wwwRagThemeOrigin = null
+    }
+  }
+
+  /**
+   * Fetch the crawled per-host brand theme for the current origin (WWW RAG) and
+   * apply it as the panel accent when the origin carries no explicit site theme.
+   * Fully best-effort: any failure leaves the default accent. Guards against a
+   * late response landing after the user navigated away (origin mismatch).
+   */
+  async function loadWwwRagTheme(origin: string): Promise<void> {
+    let host = ''
+    try {
+      host = new URL(origin).host.toLowerCase()
+    } catch {
+      return
+    }
+    if (!host) return
+    const resp = await new Promise<InternalSiteThemeResponse | null>((resolve) => {
+      try {
+        chrome.runtime.sendMessage(
+          { type: 'internal:site-theme', host },
+          (r: InternalSiteThemeResponse) => {
+            if (chrome.runtime.lastError) return resolve(null)
+            resolve(r ?? null)
+          },
+        )
+      } catch {
+        resolve(null)
+      }
+    })
+    // Drop a stale response: the panel may have navigated since we asked.
+    if (currentOrigin() !== origin) return
+    // Don't override an explicit site theme that loaded in the meantime.
+    if (siteConfig?.theme) return
+    wwwRagTheme = resp?.ok ? resp.theme : null
+    wwwRagThemeOrigin = origin
+    applySiteTheme()
   }
 
   // Phase 7b: apply the site's theme to the panel's accent. A validated hex
@@ -396,7 +447,10 @@ export function mountChatPanel(
     midnight: '#4f46e5',
   }
   function applySiteTheme(): void {
-    const theme = siteConfig?.theme
+    // Explicit site-supplied theme wins; otherwise fall back to the crawler-
+    // derived per-host theme (only if it was fetched for the current origin).
+    const wwwRag = wwwRagThemeOrigin === currentOrigin() ? wwwRagTheme : null
+    const theme = siteConfig?.theme ?? wwwRag
     const accent = theme?.accent || (theme?.preset ? PRESET_ACCENTS[theme.preset.toLowerCase()] : undefined)
     if (accent) {
       root.style.setProperty('--dls-accent', accent)

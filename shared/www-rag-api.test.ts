@@ -7,6 +7,8 @@ import {
   buildPageContextBody,
   parsePageContextResponse,
   pageStatusToPill,
+  buildSiteThemeUrl,
+  parseSiteThemeResponse,
 } from '@/shared/www-rag-api'
 
 describe('buildPageStatusUrl', () => {
@@ -148,5 +150,46 @@ describe('pageStatusToPill', () => {
   })
   it('indexed but not crawled => not-indexed', () => {
     expect(pageStatusToPill({ url: 'u', indexed: true, crawled: false })).toBe('not-indexed')
+  })
+})
+
+describe('buildSiteThemeUrl', () => {
+  it('targets www-rag/theme with the host query param', () => {
+    const url = new URL(buildSiteThemeUrl('www.drfuhrman.com'))
+    expect(url.origin + url.pathname).toBe(`${DIVINCI_API_BASE}/api/v1/www-rag/theme`)
+    expect(url.searchParams.get('host')).toBe('www.drfuhrman.com')
+  })
+})
+
+describe('parseSiteThemeResponse', () => {
+  it('maps a server ThemeConfig to an accent from primary', () => {
+    const body = JSON.stringify({
+      host: 'www.drfuhrman.com',
+      themed: true,
+      theme: { preset: 'custom', colors: { primary: '#457200', buttonBg: '#457200', accent: '#0066cc' } },
+      sourceUrl: 'https://www.drfuhrman.com/',
+    })
+    const r = parseSiteThemeResponse(body)
+    expect(r).toEqual({
+      host: 'www.drfuhrman.com',
+      theme: { preset: 'custom', accent: '#457200' },
+      sourceUrl: 'https://www.drfuhrman.com/',
+    })
+  })
+
+  it('falls back primary → buttonBg → accent', () => {
+    const r = parseSiteThemeResponse(JSON.stringify({ host: 'h', theme: { colors: { accent: '#abcdef' } } }))
+    expect(r?.theme).toEqual({ preset: 'custom', accent: '#abcdef' })
+  })
+
+  it('returns theme:null when unthemed or no usable brand color', () => {
+    expect(parseSiteThemeResponse(JSON.stringify({ host: 'h', themed: false, theme: null })))
+      .toEqual({ host: 'h', theme: null, sourceUrl: undefined })
+    expect(parseSiteThemeResponse(JSON.stringify({ host: 'h', theme: { colors: { primary: 'rgb(1,2,3)' } } }))?.theme)
+      .toBeNull() // non-hex rejected by safeHex
+  })
+
+  it('returns null on malformed JSON (caller skips theming)', () => {
+    expect(parseSiteThemeResponse('<html>502</html>')).toBeNull()
   })
 })
