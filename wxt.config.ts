@@ -90,9 +90,13 @@ export default defineConfig({
     web_accessible_resources: [
       {
         // robot.html = the 3D mascot iframe embedded in the panel empty state;
-        // the PNG is its no-WebGL fallback. Both must be framable/loadable from
-        // any site the in-page panel runs on.
-        resources: ['robot.html', 'divinci-robot.png'],
+        // the PNG is its no-WebGL fallback. Because robot.html is framed FROM a
+        // web page (not opened as a direct extension page like popup/panel), its
+        // own sub-resource scripts (the entry chunk + the lazily-imported
+        // three.js chunk under /chunks/) must ALSO be web-accessible or the
+        // browser blocks them and nothing in the iframe runs. The chunks are
+        // just JS (no secrets), so exposing them is safe.
+        resources: ['robot.html', 'divinci-robot.png', 'chunks/*.js'],
         matches: ['<all_urls>'],
       },
     ],
