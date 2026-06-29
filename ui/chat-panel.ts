@@ -2603,6 +2603,9 @@ export function mountChatPanel(
       tabMap: (stored[STORAGE_KEY_TAB_ACTIVE] as Record<string, string> | undefined) ?? {},
     })
     if (convId) void openConversation(convId)
+    // No conversation to restore → we're sitting on the empty state (shown by
+    // the static markup, which never calls renderThread), so load the robot here.
+    else ensureRobotLoaded()
     // Overlay restores its last open/closed state; a standalone panel page is
     // always open (it IS the panel).
     if (deps.mode === 'panel' || stored[STORAGE_KEY_OPEN] === true) setOpen(true, false)
