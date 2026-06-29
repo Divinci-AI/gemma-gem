@@ -22,9 +22,14 @@ describe("detectDivinciEmbed", () => {
     expect(detectDivinciEmbed(doc)).toEqual({ kind: "embed-chat-ui", releaseId: "rel_123" });
   });
 
-  it("detects embed-chat-ui by its marked style element alone", () => {
-    const doc = fakeDoc({ selectors: { "style[data-divinci-embed]": {} } });
+  it("detects the canonical [data-divinci-embed] marker (no value) alone", () => {
+    const doc = fakeDoc({ selectors: { "[data-divinci-embed]": {} } });
     expect(detectDivinciEmbed(doc)).toEqual({ kind: "embed-chat-ui", releaseId: undefined });
+  });
+
+  it("reads the release id from the [data-divinci-embed] marker value", () => {
+    const doc = fakeDoc({ selectors: { "[data-divinci-embed]": { "data-divinci-embed": "rel_marker" } } });
+    expect(detectDivinciEmbed(doc)).toEqual({ kind: "embed-chat-ui", releaseId: "rel_marker" });
   });
 
   it("detects the embed-script toggleable container", () => {

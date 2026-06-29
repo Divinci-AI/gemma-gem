@@ -29,9 +29,13 @@ export interface DivinciEmbedInfo {
 export function detectDivinciEmbed(doc: QueryRoot): DivinciEmbedInfo | null {
   const cfgReleaseId = () => doc.getElementById("divinci-docs-config")?.getAttribute("data-release-id") ?? undefined;
 
-  // 1. embed-chat-ui ("Ask Divinci" widget — fixed id + a uniquely-marked style).
-  if (doc.getElementById("divinci-docs-assistant") || doc.querySelector("style[data-divinci-embed]")) {
-    return { kind: "embed-chat-ui", releaseId: cfgReleaseId() };
+  // 1. CANONICAL marker: any element with `data-divinci-embed` (its value, when
+  //    set, is the release id). The embed-chat-ui style + the docs container both
+  //    carry it; a custom release mount can opt in with one attribute.
+  const marker = doc.querySelector("[data-divinci-embed]");
+  if (marker || doc.getElementById("divinci-docs-assistant")) {
+    const fromMarker = marker?.getAttribute("data-divinci-embed") || "";
+    return { kind: "embed-chat-ui", releaseId: fromMarker || cfgReleaseId() };
   }
 
   // 2. embed-script toggleable widget (its container class is `divinci-*-container`).
