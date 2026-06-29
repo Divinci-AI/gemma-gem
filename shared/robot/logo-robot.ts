@@ -162,6 +162,11 @@ export function createRobot(container: HTMLElement, colors: Partial<RobotColors>
   const sizeOf = () => ({ w: container.clientWidth || 140, h: container.clientHeight || 140 });
   let { w, h } = sizeOf();
   renderer.setSize(w, h, false);
+  // Ensure the canvas always fills the container (setSize updateStyle=false
+  // leaves no CSS size; without this the canvas can render at the wrong box).
+  renderer.domElement.style.width = "100%";
+  renderer.domElement.style.height = "100%";
+  renderer.domElement.style.display = "block";
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
