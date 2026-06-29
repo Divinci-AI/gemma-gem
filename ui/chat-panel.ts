@@ -194,6 +194,7 @@ export function mountChatPanel(
     progressText: root.querySelector<HTMLElement>('.dls-progress-text')!,
     messages: root.querySelector<HTMLElement>('.dls-messages')!,
     empty: root.querySelector<HTMLElement>('.dls-empty')!,
+    emptyRobot: root.querySelector<HTMLImageElement>('.dls-empty-robot')!,
     input: root.querySelector<HTMLTextAreaElement>('.dls-input')!,
     send: root.querySelector<HTMLButtonElement>('.dls-send')!,
     mic: root.querySelector<HTMLButtonElement>('.dls-mic')!,
@@ -292,6 +293,15 @@ export function mountChatPanel(
 
   // ---- Conversation persistence (local IndexedDB; account mirroring is a
   // follow-up once the SDK/OAuth transcript gaps are filled) ----------------
+  // Divinci robot in the empty state (web-accessible resource; same mascot as
+  // the Divinci agent + SDK hero). Hidden gracefully if the URL can't resolve.
+  try {
+    el.emptyRobot.src = chrome.runtime.getURL('divinci-robot.png')
+    el.emptyRobot.onerror = () => { el.emptyRobot.style.display = 'none' }
+  } catch {
+    el.emptyRobot.style.display = 'none'
+  }
+
   const store = new LocalTranscriptStore(new ChromeStorageConversationBackend())
   let activeConversationId: string | null = null
   // Mirror to the Divinci account when signed in (set by renderAccountChip).
@@ -2734,7 +2744,7 @@ const TEMPLATE = /* html */ `
         </div>
 
         <div class="dls-messages">
-          <p class="dls-empty"><span class="dls-empty-title">Ask Gemma 4 anything</span><span class="dls-empty-sub">It runs entirely on your GPU, on any page.</span><span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span></p>
+          <p class="dls-empty"><img class="dls-empty-robot" alt="" aria-hidden="true" /><span class="dls-empty-title">Ask Gemma 4 anything</span><span class="dls-empty-sub">It runs entirely on your GPU, on any page.</span><span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span></p>
         </div>
 
         <footer class="dls-footer">
@@ -3348,7 +3358,8 @@ export const SIDEBAR_CSS = /* css */ `
     flex-direction: column;
     gap: 10px;
   }
-  .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; }
+  .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; display: flex; flex-direction: column; align-items: center; }
+  .dls-empty-robot { width: 96px; height: 96px; object-fit: contain; margin-bottom: 14px; opacity: 0.95; }
   /* Phase 6: site-supplied conversation starters */
   .dls-starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 12px 16px; }
   .dls-starter-chip {

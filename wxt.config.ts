@@ -84,6 +84,15 @@ export default defineConfig({
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'",
     },
+    // The in-page panel (content script) renders the Divinci robot in its empty
+    // state; an <img src="chrome-extension://…/divinci-robot.png"> in page DOM
+    // needs the asset declared web-accessible for every site the panel runs on.
+    web_accessible_resources: [
+      {
+        resources: ['divinci-robot.png'],
+        matches: ['<all_urls>'],
+      },
+    ],
     // Toolbar icon opens the popup management UI. WXT auto-detects
     // entrypoints/popup/index.html and emits popup.html in the build,
     // so the path here matches the WXT build output (not the source path).
