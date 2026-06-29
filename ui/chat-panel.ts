@@ -168,6 +168,9 @@ export function mountChatPanel(
     shareMd: root.querySelector<HTMLButtonElement>('.dls-share-md')!,
     shareJson: root.querySelector<HTMLButtonElement>('.dls-share-json')!,
     shareLink: root.querySelector<HTMLButtonElement>('.dls-share-link')!,
+    dlWrap: root.querySelector<HTMLElement>('.dls-act-dl')!,
+    dlToggle: root.querySelector<HTMLButtonElement>('.dls-dl-toggle')!,
+    dlMenu: root.querySelector<HTMLElement>('.dls-dl-menu')!,
     newChatBtn: root.querySelector<HTMLButtonElement>('.dls-new-chat')!,
     menuNewChat: root.querySelector<HTMLButtonElement>('.dls-menu-newchat')!,
     convList: root.querySelector<HTMLElement>('.dls-conv-list')!,
@@ -1441,6 +1444,7 @@ export function mountChatPanel(
     const next = open ?? el.menu.hidden
     el.menu.hidden = !next
     el.menuBtn.setAttribute('aria-expanded', String(next))
+    if (!next) toggleDlMenu(false) // closing the menu also closes the download sub-menu
     if (next) {
       // Refresh the menu items' live state when it opens.
       renderGlobalModeToggle()
@@ -2291,17 +2295,32 @@ export function mountChatPanel(
     newChat()
   })
 
+  // Download icon → small Markdown/JSON sub-dropdown (the MD/JSON buttons keep
+  // their existing handlers, which download + close the whole menu).
+  function toggleDlMenu(open?: boolean): void {
+    const next = open ?? el.dlMenu.hidden
+    el.dlMenu.hidden = !next
+    el.dlToggle.setAttribute('aria-expanded', String(next))
+  }
+  el.dlToggle.addEventListener('click', (e) => {
+    e.stopPropagation()
+    toggleDlMenu()
+  })
+
   // "New chat" is meaningless when the current thread is already fresh (the user
   // hasn't sent anything yet) — hide both surfaces in that case.
   function isFreshChat(): boolean {
     return !el.messages.querySelector('.dls-row-user')
   }
   function updateNewChatVisibility(): void {
-    // Use inline display, not [hidden]: `.dls-menu-item { display:flex }` (and the
-    // rail button's rule) override the [hidden] attribute's UA display:none.
+    // New chat / Share / Download only make sense once the transcript has user
+    // input — hide them on a fresh chat. Inline display, not [hidden]: the button
+    // CSS rules override the [hidden] attribute's UA display:none.
     const v = isFreshChat() ? 'none' : ''
-    el.newChatBtn.style.display = v
-    el.menuNewChat.style.display = v
+    el.newChatBtn.style.display = v // rail button
+    el.menuNewChat.style.display = v // top-row icon
+    el.shareLink.style.display = v
+    el.dlWrap.style.display = v
   }
 
   // Hamburger menu (global / full-screen / share) — open/close.
@@ -2626,14 +2645,39 @@ const TEMPLATE = /* html */ `
             </svg>
           </button>
           <div class="dls-menu" hidden role="menu">
-            <button class="dls-account-chip dls-menu-account" data-state="signed-out" type="button" title="Divinci account">
-              <img class="dls-account-avatar" alt="" width="28" height="28" hidden />
-              <span class="dls-account-fallback" hidden></span>
-              <span class="dls-account-text">
-                <span class="dls-account-label">Sign in to Divinci</span>
-                <span class="dls-account-sub">Use your account models &amp; sync chats</span>
-              </span>
-            </button>
+            <div class="dls-menu-toprow">
+              <button class="dls-account-chip dls-menu-account" data-state="signed-out" type="button" title="Divinci account">
+                <img class="dls-account-avatar" alt="" width="28" height="28" hidden />
+                <span class="dls-account-fallback" hidden></span>
+                <span class="dls-account-text">
+                  <span class="dls-account-label">Sign in to Divinci</span>
+                  <span class="dls-account-sub">Use your account models &amp; sync chats</span>
+                </span>
+              </button>
+              <div class="dls-menu-actions">
+                <button class="dls-act dls-menu-newchat" type="button" title="New chat" aria-label="New chat">
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
+                </button>
+                <button class="dls-act dls-global-toggle" data-state="tab" type="button" aria-pressed="false" title="Global chat">
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/></svg>
+                </button>
+                <button class="dls-act dls-tools-btn" type="button" title="Tools (Skills & MCP)" aria-label="Tools">
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17v3h3l5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z"/></svg>
+                </button>
+                <button class="dls-act dls-share-link" type="button" disabled title="Sign in to sync this chat to your Divinci account, then copy a public share link" aria-label="Copy Divinci link">
+                  <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"/></svg>
+                </button>
+                <div class="dls-act-dl">
+                  <button class="dls-act dls-dl-toggle" type="button" title="Download transcript" aria-label="Download transcript" aria-haspopup="true" aria-expanded="false">
+                    <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
+                  </button>
+                  <div class="dls-dl-menu" hidden role="menu">
+                    <button class="dls-menu-item dls-share-md" type="button" role="menuitem"><span class="dls-menu-label">Markdown</span></button>
+                    <button class="dls-menu-item dls-share-json" type="button" role="menuitem"><span class="dls-menu-label">JSON</span></button>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="dls-menu-sep"></div>
             <div class="dls-menu-modes" role="group" aria-label="Panel display mode">
               <button class="dls-mode-btn dls-mode-overlay" type="button" title="Overlay — slides over the page" aria-label="Overlay" aria-pressed="false">
@@ -2654,37 +2698,9 @@ const TEMPLATE = /* html */ `
               </button>
             </div>
             <div class="dls-menu-sep"></div>
-            <button class="dls-menu-item dls-menu-newchat" type="button" role="menuitem">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
-              <span class="dls-menu-label">New chat</span>
-            </button>
-            <div class="dls-menu-sep"></div>
             <div class="dls-menu-section-label">Recent chats</div>
             <div class="dls-menu-convs-empty" hidden>No previous chats yet.</div>
             <div class="dls-menu-convlist"></div>
-            <div class="dls-menu-sep"></div>
-            <button class="dls-menu-item dls-tools-btn" type="button" role="menuitem">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.7 6.3a4 4 0 0 0-5.2 5.2L4 17v3h3l5.5-5.5a4 4 0 0 0 5.2-5.2l-2.4 2.4-2.1-.6-.6-2.1 2.4-2.4z"/></svg>
-              <span class="dls-menu-label">Tools (Skills &amp; MCP)</span>
-            </button>
-            <div class="dls-menu-sep"></div>
-            <button class="dls-menu-item dls-global-toggle" type="button" role="menuitem" data-state="tab" aria-pressed="false">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M3 12h18M12 3c2.5 2.4 3.8 5.6 3.8 9s-1.3 6.6-3.8 9c-2.5-2.4-3.8-5.6-3.8-9S9.5 5.4 12 3z"/></svg>
-              <span class="dls-menu-label">Global chat</span>
-            </button>
-            <div class="dls-menu-sep"></div>
-            <button class="dls-menu-item dls-share-md" type="button" role="menuitem">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
-              <span class="dls-menu-label">Download Markdown</span>
-            </button>
-            <button class="dls-menu-item dls-share-json" type="button" role="menuitem">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 19h14"/></svg>
-              <span class="dls-menu-label">Download JSON</span>
-            </button>
-            <button class="dls-menu-item dls-share-link" type="button" role="menuitem" disabled title="Sign in to sync this chat to your Divinci account, then copy a public share link">
-              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M10 14a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1M14 10a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1"/></svg>
-              <span class="dls-menu-label">Copy Divinci link</span>
-            </button>
             <div class="dls-menu-sep"></div>
             <a class="dls-menu-item dls-menu-extlink" href="${PRIVACY_POLICY_URL}" target="_blank" rel="noopener noreferrer" role="menuitem">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/></svg>
@@ -3089,10 +3105,27 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-rail { display: none; }
   .dls-conv-empty { color: var(--dls-muted); font-size: 12px; padding: 8px 4px; }
 
-  /* Account chip relocated into the hamburger menu — full-width row, avatar +
-     name + email (two lines), so the row isn't just a lone avatar. */
+  /* Top row: account (avatar + name/email) on the left, action icons on the
+     right. The account flex-shrinks (min-width:0) so the email truncates and the
+     row makes room for however many icons are showing. */
+  .dls-menu-toprow { display: flex; align-items: center; gap: 4px; padding: 2px; }
+  .dls-menu-actions { display: flex; align-items: center; gap: 1px; flex-shrink: 0; }
+  .dls-act {
+    background: none; border: none; color: var(--dls-muted); cursor: pointer;
+    padding: 6px; border-radius: 7px; display: flex; align-items: center;
+  }
+  .dls-act:hover:not(:disabled) { color: var(--dls-text); background: var(--dls-bg); }
+  .dls-act:disabled { opacity: 0.4; cursor: default; }
+  .dls-act.dls-global-toggle[data-state="global"] { color: var(--dls-accent); }
+  .dls-act-dl { position: relative; display: flex; }
+  .dls-dl-menu {
+    position: absolute; right: 0; top: 100%; margin-top: 4px; z-index: 7;
+    background: var(--dls-bg-2); border: 1px solid var(--dls-border); border-radius: 8px;
+    padding: 4px; min-width: 130px; box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    display: flex; flex-direction: column; gap: 1px;
+  }
   .dls-menu .dls-account-chip.dls-menu-account {
-    width: 100%; display: flex; align-items: center; gap: 10px;
+    flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
     padding: 8px 10px; border-radius: 8px; border: none; background: none;
     color: var(--dls-text); cursor: pointer; font: inherit; text-align: left;
   }
