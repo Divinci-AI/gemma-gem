@@ -194,7 +194,7 @@ export function mountChatPanel(
     progressText: root.querySelector<HTMLElement>('.dls-progress-text')!,
     messages: root.querySelector<HTMLElement>('.dls-messages')!,
     empty: root.querySelector<HTMLElement>('.dls-empty')!,
-    emptyRobot: root.querySelector<HTMLImageElement>('.dls-empty-robot')!,
+    emptyRobot: root.querySelector<HTMLIFrameElement>('.dls-empty-robot')!,
     input: root.querySelector<HTMLTextAreaElement>('.dls-input')!,
     send: root.querySelector<HTMLButtonElement>('.dls-send')!,
     mic: root.querySelector<HTMLButtonElement>('.dls-mic')!,
@@ -293,13 +293,18 @@ export function mountChatPanel(
 
   // ---- Conversation persistence (local IndexedDB; account mirroring is a
   // follow-up once the SDK/OAuth transcript gaps are filled) ----------------
-  // Divinci robot in the empty state (web-accessible resource; same mascot as
-  // the Divinci agent + SDK hero). Hidden gracefully if the URL can't resolve.
-  try {
-    el.emptyRobot.src = chrome.runtime.getURL('divinci-robot.png')
-    el.emptyRobot.onerror = () => { el.emptyRobot.style.display = 'none' }
-  } catch {
-    el.emptyRobot.style.display = 'none'
+  // Divinci 3D robot in the empty state — rendered in an extension-page iframe
+  // (robot.html) so three.js loads lazily, only when the empty state first
+  // appears, never in the base content script. Loaded once per panel.
+  let robotLoaded = false
+  function ensureRobotLoaded(): void {
+    if (robotLoaded) return
+    robotLoaded = true
+    try {
+      el.emptyRobot.src = chrome.runtime.getURL('robot.html')
+    } catch {
+      el.emptyRobot.style.display = 'none'
+    }
   }
 
   const store = new LocalTranscriptStore(new ChromeStorageConversationBackend())
@@ -1255,6 +1260,7 @@ export function mountChatPanel(
   function renderThread(messages: ReadonlyArray<CoreChatMessage | StoredMessage>): void {
     el.messages.querySelectorAll('.dls-row').forEach((b) => b.remove())
     el.empty.hidden = messages.length > 0
+    if (!el.empty.hidden) ensureRobotLoaded() // lazy-load the 3D robot when shown
     renderStarters()
     updateNewChatVisibility()
     for (const m of messages) {
@@ -2744,7 +2750,7 @@ const TEMPLATE = /* html */ `
         </div>
 
         <div class="dls-messages">
-          <p class="dls-empty"><img class="dls-empty-robot" alt="" aria-hidden="true" /><span class="dls-empty-title">Ask Gemma 4 anything</span><span class="dls-empty-sub">It runs entirely on your GPU, on any page.</span><span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span></p>
+          <p class="dls-empty"><iframe class="dls-empty-robot" aria-hidden="true" tabindex="-1" scrolling="no" title="Divinci"></iframe><span class="dls-empty-title">Ask Gemma 4 anything</span><span class="dls-empty-sub">It runs entirely on your GPU, on any page.</span><span class="dls-disclaimer-text">Gemma reads this page's text on your device to answer.</span></p>
         </div>
 
         <footer class="dls-footer">
@@ -3359,7 +3365,7 @@ export const SIDEBAR_CSS = /* css */ `
     gap: 10px;
   }
   .dls-empty { color: var(--dls-muted); font-size: 13px; text-align: center; margin: auto 0; display: flex; flex-direction: column; align-items: center; }
-  .dls-empty-robot { width: 96px; height: 96px; object-fit: contain; margin-bottom: 14px; opacity: 0.95; }
+  .dls-empty-robot { width: 132px; height: 132px; border: none; background: transparent; margin-bottom: 6px; color-scheme: normal; pointer-events: none; }
   /* Phase 6: site-supplied conversation starters */
   .dls-starters { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; padding: 12px 16px; }
   .dls-starter-chip {

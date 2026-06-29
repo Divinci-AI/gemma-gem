@@ -89,7 +89,10 @@ export default defineConfig({
     // needs the asset declared web-accessible for every site the panel runs on.
     web_accessible_resources: [
       {
-        resources: ['divinci-robot.png'],
+        // robot.html = the 3D mascot iframe embedded in the panel empty state;
+        // the PNG is its no-WebGL fallback. Both must be framable/loadable from
+        // any site the in-page panel runs on.
+        resources: ['robot.html', 'divinci-robot.png'],
         matches: ['<all_urls>'],
       },
     ],
