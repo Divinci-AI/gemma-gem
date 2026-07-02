@@ -349,6 +349,29 @@ export class ChatHost {
         watchdog,
       ])
 
+      // Zero-token result is a real failure for a chat model (immediate EOS /
+      // broken prompt), NOT a valid empty reply — surface it with the exact
+      // rendered prompt so the cause is visible without the offscreen console.
+      if (tokensGenerated === 0) {
+        let promptPreview = '(unavailable)'
+        try {
+          const rendered = tokenizer.apply_chat_template(opts.messages, {
+            add_generation_prompt: true,
+            tokenize: false,
+            ...(templateOverride ? { chat_template: templateOverride } : {}),
+            tools: opts.tools,
+          })
+          promptPreview = typeof rendered === 'string' ? rendered : String(rendered)
+        } catch (e) {
+          promptPreview = `(render failed: ${(e as Error).message})`
+        }
+        throw new Error(
+          `${modelId} produced 0 tokens (empty response). ` +
+          `messages=${opts.messages.length}, prompt=${promptPreview.length}c. ` +
+          `First 240c: ${JSON.stringify(promptPreview.slice(0, 240))}`
+        )
+      }
+
       return { fullText, tokensGenerated, durationMs: Date.now() - start }
     } finally {
       this.activeStopper = null
