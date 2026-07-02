@@ -313,7 +313,11 @@ header h1 {
   border-top-color: transparent;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
-  vertical-align: middle;
+  /* The card is a flexbox; without these the fixed 10x10 gets shrunk in width
+     and stretched in height → a flattened, lopsided oval. Pin it square. */
+  flex: 0 0 auto;
+  align-self: center;
+  box-sizing: border-box;
 }
 
 @keyframes spin {
@@ -414,6 +418,22 @@ header h1 {
 }
 
 #settings summary:hover { color: var(--c-text); }
+
+/* Nested collapsible (e.g. "Site access & WebMCP") tucked inside Advanced —
+   sits on the border-top like a setting-group, its own summary a subhead. */
+.setting-subgroup {
+  border-top: 1px solid var(--c-border);
+}
+.setting-subgroup > summary {
+  padding: 8px 4px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--c-muted);
+}
+.setting-subgroup > summary:hover { color: var(--c-text); }
+.setting-subgroup .setting-group { border-top: none; }
 
 /* Grouped subsections inside the single "Advanced settings" details. */
 .setting-group {

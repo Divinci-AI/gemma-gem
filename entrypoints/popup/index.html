@@ -105,19 +105,6 @@
       <button id="unload-btn" class="unload-action" hidden>Unload model from GPU</button>
     </section>
 
-    <section id="site-access">
-      <p class="setting-subhead">Site access</p>
-      <p class="setting-note" id="site-access-empty">
-        No websites have been granted access to this extension yet. Sites you
-        allow (to run on-device chat or use Divinci tools) appear here.
-      </p>
-      <ul id="site-access-list" class="site-access-list"></ul>
-      <label class="setting-row" style="margin-top:10px;" title="Experimental. Lets a website's own AI agent call Divinci's on-device chat as a WebMCP tool. Running it still asks your permission per site.">
-        <input type="checkbox" id="webmcp-expose-toggle" />
-        <span>Expose Divinci as a WebMCP tool to sites <span style="opacity:.6">(experimental)</span></span>
-      </label>
-    </section>
-
     <section id="settings">
       <p class="setting-note">
         Page indexing uses your Divinci account automatically (coming soon).
@@ -239,6 +226,20 @@
             Optional. Enables the in-chat Tools panel (Skills + MCP servers) for that workspace.
           </p>
         </div>
+              <details class="setting-subgroup">
+          <summary>Site access &amp; WebMCP</summary>
+          <div class="setting-group">
+            <p class="setting-note" id="site-access-empty">
+              No websites have been granted access to this extension yet. Sites you
+              allow (to run on-device chat or use Divinci tools) appear here.
+            </p>
+            <ul id="site-access-list" class="site-access-list"></ul>
+            <label class="setting-row" style="margin-top:10px;" title="Experimental. Lets a website's own AI agent call Divinci's on-device chat as a WebMCP tool. Running it still asks your permission per site.">
+              <input type="checkbox" id="webmcp-expose-toggle" />
+              <span>Expose Divinci as a WebMCP tool to sites <span style="opacity:.6">(experimental)</span></span>
+            </label>
+          </div>
+        </details>
       </details>
     </section>
 
