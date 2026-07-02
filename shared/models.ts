@@ -4,13 +4,12 @@
  * to invalidate the user-side cache.
  *
  * Size corresponds to the text-only path (decoder + embed_tokens, no
- * vision/audio encoder). The shape supports N models; we ship with E2B
- * only. To add a second, extend the ModelId union, add an entry to
+ * vision/audio encoder). The shape supports N models. To add one, extend the ModelId union, add an entry to
  * MODELS, add a card to entrypoints/popup/index.html, and surface it
  * in chat.divinci.app's AVAILABLE_MODELS picker.
  */
 
-export type ModelId = 'gemma-4-e2b'
+export type ModelId = 'gemma-4-e2b' | 'gemma-4-e2b-qat' | 'lfm2.5-230m'
 
 export interface ModelConfig {
   id: ModelId
@@ -39,6 +38,36 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     label: 'Gemma 4 E2B',
     downloadSize: '~2.9 GB',
     dtype: 'q4f16',
+    contextLimit: 32_768,
+    version: 1,
+  },
+  // QAT (quantization-aware trained) Gemma 4 E2B: near-bf16 quality at 4-bit.
+  // Kept as a SEPARATE entry (not a swap of the one above) so existing users'
+  // 2.9 GB cache stays valid — the QAT repo only ships q4 (no f16 activations),
+  // which is ~300 MB larger. Community conversion of google's official
+  // gemma-4-E2B-it-qat weights to the transformers.js split layout.
+  'gemma-4-e2b-qat': {
+    id: 'gemma-4-e2b-qat',
+    hfModelId: 'nico-martin/gemma-4-E2B-it-qat-q4-ONNX',
+    revision: 'f83a0fb4825956b3d87687a30b7716e8692f1f70',
+    label: 'Gemma 4 E2B QAT',
+    downloadSize: '~3.2 GB',
+    dtype: 'q4',
+    contextLimit: 32_768,
+    version: 1,
+  },
+  // LiquidAI LFM2.5 230M — the "Lite" tier: ~211 MB download (vs 2.9 GB),
+  // loads in seconds, runs on hardware the E2B gate excludes. lfm2 arch is
+  // supported by our bundled @huggingface/transformers 4.2.0. Use for
+  // instant-start chat and utility inference; E2B remains the quality tier.
+  // NOTE: LFM Open License 1.0 (revenue-conditioned) — reviewed before ship.
+  'lfm2.5-230m': {
+    id: 'lfm2.5-230m',
+    hfModelId: 'LiquidAI/LFM2.5-230M-ONNX',
+    revision: 'c6f46e4e3f885ebcad164d14059a49f90e27eb4d',
+    label: 'LFM2.5 230M (Lite)',
+    downloadSize: '~211 MB',
+    dtype: 'q4',
     contextLimit: 32_768,
     version: 1,
   },

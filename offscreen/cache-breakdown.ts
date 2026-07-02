@@ -13,9 +13,11 @@ import { MODELS, type ModelId } from '@/shared/models'
 export type CacheBreakdown = Record<ModelId, { isCached: boolean; bytes: number }>
 
 export function emptyBreakdown(): CacheBreakdown {
-  return {
-    'gemma-4-e2b': { isCached: false, bytes: 0 },
+  const out = {} as CacheBreakdown
+  for (const id of Object.keys(MODELS) as ModelId[]) {
+    out[id] = { isCached: false, bytes: 0 }
   }
+  return out
 }
 
 interface MinimalCacheStorage {

@@ -72,7 +72,11 @@ import type {
   InternalSiteThemeResponse,
 } from '@/shared/messages'
 
-const MODEL_ID: ModelId = DEFAULT_MODEL_ID
+// The panel's active model. Hydrated from STORAGE_KEY_MODEL at mount (so a
+// model chosen in the popup or a previous session carries over) and switchable
+// via the Load card's model select. Mutable on purpose — all render fns below
+// read it at call time.
+let MODEL_ID: ModelId = DEFAULT_MODEL_ID
 const STORAGE_KEY_EXPANDED = 'divinci_sidebar_expanded'
 const STORAGE_KEY_ACTIVE_CONV = 'divinci_active_conversation'
 const STORAGE_KEY_PANEL_WIDTH = 'divinci_sidebar_width'
@@ -188,6 +192,7 @@ export function mountChatPanel(
     accountLabel: root.querySelector<HTMLElement>('.dls-account-label')!,
     accountSub: root.querySelector<HTMLElement>('.dls-account-sub')!,
     loadCard: root.querySelector<HTMLElement>('.dls-load-card')!,
+    modelSelect: root.querySelector<HTMLSelectElement>('.dls-model-select')!,
     loadBtn: root.querySelector<HTMLButtonElement>('.dls-load-btn')!,
     loadHint: root.querySelector<HTMLElement>('.dls-load-hint')!,
     progress: root.querySelector<HTMLElement>('.dls-progress')!,
@@ -201,18 +206,48 @@ export function mountChatPanel(
     mic: root.querySelector<HTMLButtonElement>('.dls-mic')!,
     disclaimerText: root.querySelector<HTMLElement>('.dls-disclaimer-text')!,
   }
-  el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
-  // Colored Gemma mark + label. replaceChildren (not innerHTML) keeps us off the
-  // HTML-injection path; the logo is a static bundled data URI, the label a const.
-  el.modelChip.replaceChildren()
-  const chipLogo = document.createElement('img')
-  chipLogo.src = GEMMA_LOGO_DATA_URI
-  chipLogo.alt = ''
-  chipLogo.className = 'dls-model-chip-logo'
-  const chipLabel = document.createElement('span')
-  chipLabel.className = 'dls-model-chip-label'
-  chipLabel.textContent = MODELS[MODEL_ID].label
-  el.modelChip.append(chipLogo, chipLabel)
+  // Model identity (chip + load hint) re-renders whenever MODEL_ID changes.
+  // replaceChildren (not innerHTML) keeps us off the HTML-injection path; the
+  // logo is a static bundled data URI, labels come from the MODELS registry.
+  function renderModelIdentity(): void {
+    el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
+    el.modelChip.replaceChildren()
+    const chipLogo = document.createElement('img')
+    chipLogo.src = GEMMA_LOGO_DATA_URI
+    chipLogo.alt = ''
+    chipLogo.className = 'dls-model-chip-logo'
+    const chipLabel = document.createElement('span')
+    chipLabel.className = 'dls-model-chip-label'
+    chipLabel.textContent = MODELS[MODEL_ID].label
+    el.modelChip.append(chipLogo, chipLabel)
+    el.modelSelect.value = MODEL_ID
+  }
+  // Populate the Load-card model picker from the registry (once).
+  for (const cfg of Object.values(MODELS)) {
+    const opt = document.createElement('option')
+    opt.value = cfg.id
+    opt.textContent = `${cfg.label} · ${cfg.downloadSize}`
+    el.modelSelect.append(opt)
+  }
+  el.modelSelect.addEventListener('change', () => {
+    const next = el.modelSelect.value as ModelId
+    if (!MODELS[next] || next === MODEL_ID) return
+    MODEL_ID = next
+    // Persist the choice so auto-warm + the popup agree with the panel.
+    void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
+    renderModelIdentity()
+    renderModelState()
+  })
+  renderModelIdentity()
+  // Hydrate from a previously-remembered model (popup load / prior session).
+  void chrome.storage.local.get(STORAGE_KEY_MODEL).then((stored) => {
+    const remembered = stored[STORAGE_KEY_MODEL] as ModelId | undefined
+    if (remembered && MODELS[remembered] && remembered !== MODEL_ID) {
+      MODEL_ID = remembered
+      renderModelIdentity()
+      renderModelState()
+    }
+  }).catch(() => {})
 
   // ---- State --------------------------------------------------------------
   let port: chrome.runtime.Port | null = null
@@ -2833,6 +2868,7 @@ const TEMPLATE = /* html */ `
 
       <div class="dls-main">
         <div class="dls-load-card">
+          <select class="dls-model-select" aria-label="Choose local model"></select>
           <button class="dls-load-btn">Load model</button>
           <p class="dls-load-hint"></p>
           <div class="dls-progress" hidden>
@@ -3421,6 +3457,18 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-load-card {
     padding: 14px;
     border-bottom: 1px solid var(--dls-border);
+  }
+  .dls-model-select {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--dls-border);
+    border-radius: 8px;
+    background: var(--dls-bg);
+    color: var(--dls-text);
+    font: inherit;
+    font-size: 12.5px;
+    cursor: pointer;
   }
   .dls-load-btn {
     width: 100%;

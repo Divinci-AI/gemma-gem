@@ -139,3 +139,30 @@ describe('computeCacheBreakdown', () => {
     expect(result['gemma-4-e2b']).toEqual({ isCached: false, bytes: 0 })
   })
 })
+
+// ---- Multi-model registry (Lite tier + QAT, added 2026-07-02) --------------
+import { MODELS } from '@/shared/models'
+
+describe('multi-model registry', () => {
+  it('emptyBreakdown covers every registered model (was hardcoded to one)', () => {
+    const bd = emptyBreakdown()
+    for (const id of Object.keys(MODELS)) {
+      expect(bd[id as keyof typeof bd]).toEqual({ isCached: false, bytes: 0 })
+    }
+    expect(Object.keys(bd).sort()).toEqual(Object.keys(MODELS).sort())
+  })
+
+  it('every model pins a full-SHA revision and declares a download size', () => {
+    for (const cfg of Object.values(MODELS)) {
+      expect(cfg.revision).toMatch(/^[a-f0-9]{40}$/)
+      expect(cfg.downloadSize).toMatch(/(MB|GB)/)
+      expect(cfg.contextLimit).toBeGreaterThan(0)
+    }
+  })
+
+  it('cache bucketing distinguishes the three model repos by URL', () => {
+    expect(modelIdForUrl('https://huggingface.co/LiquidAI/LFM2.5-230M-ONNX/resolve/main/onnx/model_q4.onnx')).toBe('lfm2.5-230m')
+    expect(modelIdForUrl('https://huggingface.co/nico-martin/gemma-4-E2B-it-qat-q4-ONNX/resolve/x/onnx/decoder_model_merged_q4.onnx')).toBe('gemma-4-e2b-qat')
+    expect(modelIdForUrl('https://huggingface.co/onnx-community/gemma-4-E2B-it-ONNX/resolve/x/y.onnx')).toBe('gemma-4-e2b')
+  })
+})
