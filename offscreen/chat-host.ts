@@ -293,10 +293,16 @@ export class ChatHost {
         tools: opts.tools,
       })
 
+      // Watchdog: if generation produces NO token within this window it's almost
+      // certainly hung in prefill (a silent runtime incompatibility — generate()
+      // never returns and never throws, so the chat sits on '…' forever). Cleared
+      // on the first token (a slow-but-working generation is fine).
+      let clearWatch: () => void = () => {}
       const streamer = new TextStreamer(this.tokenizer, {
         skip_prompt: true,
         skip_special_tokens: true,
         callback_function: (text: string) => {
+          if (tokensGenerated === 0) clearWatch()
           tokensGenerated += 1
           fullText += text
           onToken(text)
@@ -319,7 +325,23 @@ export class ChatHost {
       }
       if (typeof opts.topP === 'number') generateOpts.top_p = opts.topP
 
-      await this.model.generate(generateOpts)
+      const NO_TOKEN_TIMEOUT_MS = 30_000
+      const watchdog = new Promise<never>((_, reject) => {
+        const t = setTimeout(() => {
+          reject(new Error(
+            `No output from ${this.currentModelId} in ${NO_TOKEN_TIMEOUT_MS / 1000}s — ` +
+            `generation appears stuck (possible WebGPU/runtime incompatibility). ` +
+            `Open the extension's offscreen console for details.`
+          ))
+        }, NO_TOKEN_TIMEOUT_MS)
+        clearWatch = () => clearTimeout(t)
+      })
+      // If generate resolves first, cancel the watchdog. If it hangs with no
+      // token, the watchdog rejects → surfaces a real error instead of '…'.
+      await Promise.race([
+        this.model.generate(generateOpts).then((r: unknown) => { clearWatch(); return r }),
+        watchdog,
+      ])
 
       return { fullText, tokensGenerated, durationMs: Date.now() - start }
     } finally {
