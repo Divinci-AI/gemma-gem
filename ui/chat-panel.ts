@@ -238,7 +238,10 @@ export function mountChatPanel(
     // Persist the choice so auto-warm + the popup agree with the panel.
     void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
     renderModelIdentity()
-    renderModelState()
+    // Switching the picker = load the chosen model. The offscreen disposes the
+    // current one and loads this (cached models load in seconds). Without this,
+    // the dock label diverged from the actually-loaded model and chat stalled.
+    loadModel()
   })
   renderModelIdentity()
   // Hydrate from a previously-remembered model (popup load / prior session).
@@ -1098,10 +1101,19 @@ export function mountChatPanel(
   }
 
   function applyStatus(status: InternalStatusResponse): void {
+    // Adopt the offscreen's REAL active model so the dock never diverges from
+    // what's actually loaded. Precedence: a load in flight (loadingModelId /
+    // the cross-surface mirror) wins over the currently-loaded model, so a just-
+    // initiated switch isn't reverted to the old model mid-load.
+    const activeId = status.loadingModelId ?? mirrorLoadingId ?? status.currentModelId
+    if (activeId && MODELS[activeId] && activeId !== MODEL_ID) {
+      MODEL_ID = activeId
+      renderModelIdentity()
+    }
     // A load of OUR model started on another surface (e.g. the popup) is
     // mirrored to STORAGE_KEY_LOADING by the SW; reflect it even before this
     // surface's own status catches up.
-    isLoading = status.loadingModelId != null || mirrorLoadingId === MODEL_ID
+    isLoading = status.loadingModelId != null || mirrorLoadingId != null
     isLoaded = status.isLoaded && status.currentModelId === MODEL_ID
 
     if (isLoading && status.loadProgress) {
