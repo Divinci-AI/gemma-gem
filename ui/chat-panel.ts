@@ -211,6 +211,14 @@ export function mountChatPanel(
     disclaimerText: root.querySelector<HTMLElement>('.dls-disclaimer-text')!,
     emptyTitle: root.querySelector<HTMLElement>('.dls-empty-title')!,
   }
+  // Page-reading toggle (default on — it's the core feature). Cached from
+  // settings; kept fresh via the storage listener. Extraction is additionally
+  // gated by the url-policy so sensitive pages are never read. Declared HERE
+  // (not further down) so renderModelIdentity()'s mount-time renderDisclaimer()
+  // call doesn't hit a temporal-dead-zone ReferenceError — which aborted mount
+  // and left the launcher handle unwired (v0.11.0 regression).
+  let readPageContentSetting = true
+
   // Model identity (chip + load hint) re-renders whenever MODEL_ID changes.
   // replaceChildren (not innerHTML) keeps us off the HTML-injection path; the
   // logo is a static bundled data URI, labels come from the MODELS registry.
@@ -294,10 +302,6 @@ export function mountChatPanel(
   // ground the chat via page-context. Only set when the url passed the policy.
   let groundableUrl: string | null = null
 
-  // Page-reading toggle (default on — it's the core feature). Cached from
-  // settings; kept fresh via the storage listener. Extraction is additionally
-  // gated by the url-policy so sensitive pages are never read.
-  let readPageContentSetting = true
 
   /**
    * The current page's visible text for grounding, or null when reading is off
