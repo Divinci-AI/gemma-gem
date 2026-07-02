@@ -1246,8 +1246,16 @@ export function mountChatPanel(
         if (streamingBubble) streamingBubble.textContent = `Queued (#${ev.position})…`
         return
       case 'divinci:error':
-        // Chat-turn errors are rendered by the ChatController (onError). Here we
-        // only own LOAD errors + fatal model-state.
+        // Chat-turn errors are normally rendered by the ChatController (onError).
+        // FALLBACK: if a '…' placeholder bubble is still up when an error arrives
+        // (controller missed it, or the error came from outside a controlled
+        // turn), surface it here so the chat can never hang silently on '…'.
+        if (streamingBubble?.dataset.placeholder) {
+          streamingBubble.classList.add('dls-bubble-error')
+          streamingBubble.textContent = `Error: ${ev.message}`
+          delete streamingBubble.dataset.placeholder
+          streamingBubble = null
+        }
         if (isLoading) {
           isLoading = false
           if (ev.fatal) isLoaded = false

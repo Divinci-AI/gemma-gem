@@ -277,6 +277,9 @@ export class ChatHost {
       const templateOverride = this.currentModelId
         ? MODELS[this.currentModelId]?.chatTemplate
         : undefined
+      // Diagnostic (offscreen console): confirms which model + whether the
+      // per-model chat-template override is active for this turn.
+      console.warn(`[divinci] chat turn model=${this.currentModelId} templateOverride=${templateOverride ? 'yes' : 'no'}`)
       const inputs = this.tokenizer.apply_chat_template(opts.messages, {
         add_generation_prompt: true,
         tokenize: true,
