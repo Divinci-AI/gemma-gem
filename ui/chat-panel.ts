@@ -279,6 +279,8 @@ export function mountChatPanel(
   // Cross-surface load mirror: which model the SW says is loading (started on
   // ANY surface). Hydrated at mount + kept live via storage.onChanged.
   let mirrorLoadingId: ModelId | null = null
+  // Which models are currently resident in the offscreen (multi-model).
+  let loadedModelIds: ModelId[] = []
   // Read once at mount in case a load is ALREADY in flight when this panel opens.
   void chrome.storage.local.get(STORAGE_KEY_LOADING).then((stored) => {
     const v = stored[STORAGE_KEY_LOADING] as LoadingMirror | undefined
@@ -954,16 +956,21 @@ export function mountChatPanel(
       const name = document.createElement('span')
       name.className = 'dls-model-menu-name'
       name.textContent = cfg.label
+      const resident = loadedModelIds.includes(cfg.id)
       const size = document.createElement('span')
       size.className = 'dls-model-menu-size'
-      size.textContent = cfg.downloadSize
+      // Resident models switch instantly; others show their download size.
+      size.textContent = resident ? 'loaded' : cfg.downloadSize
+      if (resident) size.classList.add('dls-model-menu-loaded')
       item.append(check, name, size)
       item.addEventListener('click', () => {
         closeModelMenu()
-        if (cfg.id === MODEL_ID && isLoaded) return
+        if (cfg.id === MODEL_ID) return
         MODEL_ID = cfg.id
         void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
         renderModelIdentity()
+        // loadModel() sends divinci:load, which the host treats as an INSTANT
+        // activate when the model is already resident, or a real load otherwise.
         loadModel()
       })
       el.modelMenu.append(item)
@@ -1179,7 +1186,8 @@ export function mountChatPanel(
     // what's actually loaded. Precedence: a load in flight (loadingModelId /
     // the cross-surface mirror) wins over the currently-loaded model, so a just-
     // initiated switch isn't reverted to the old model mid-load.
-    const activeId = status.loadingModelId ?? mirrorLoadingId ?? status.currentModelId
+    loadedModelIds = status.loadedModelIds ?? []
+    const activeId = status.loadingModelId ?? mirrorLoadingId ?? status.activeModelId ?? status.currentModelId
     if (activeId && MODELS[activeId] && activeId !== MODEL_ID) {
       MODEL_ID = activeId
       renderModelIdentity()
@@ -3535,6 +3543,7 @@ export const SIDEBAR_CSS = /* css */ `
   .dls-model-menu-check { width: 12px; flex: 0 0 auto; font-size: 11px; }
   .dls-model-menu-name { flex: 1 1 auto; white-space: nowrap; }
   .dls-model-menu-size { flex: 0 0 auto; font-size: 10.5px; opacity: 0.65; }
+  .dls-model-menu-loaded { color: #6ee7a8; opacity: 0.95; font-weight: 600; }
   .dls-model-menu-item.is-active .dls-model-menu-size { opacity: 0.85; }
 
   .dls-model-chip {

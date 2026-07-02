@@ -121,7 +121,7 @@ function render(status: InternalStatusResponse | null, mirrorLoadingId: ModelId 
       els.statusQueue.textContent = '—'
       els.statusProgress.hidden = true
       els.unloadBtn.hidden = true
-      renderCards(null, mirrorLoadingId)
+      renderCards([], mirrorLoadingId, mirrorLoadingId)
       renderError(null)
       return
     }
@@ -129,7 +129,7 @@ function render(status: InternalStatusResponse | null, mirrorLoadingId: ModelId 
     els.statusQueue.textContent = '0'
     els.statusProgress.hidden = true
     els.unloadBtn.hidden = true
-    renderCards(null, null)
+    renderCards([], null, null)
     renderError(null)
     return
   }
@@ -169,7 +169,7 @@ function render(status: InternalStatusResponse | null, mirrorLoadingId: ModelId 
   }
 
   els.unloadBtn.hidden = !status.isLoaded
-  renderCards(status.currentModelId, loadingModelId)
+  renderCards(status.loadedModelIds, status.activeModelId ?? loadingModelId, loadingModelId)
   renderCacheState(status.cacheBreakdown)
   renderError(status.lastError)
   renderSettings(status.settings)
@@ -207,26 +207,38 @@ function renderSettings(settings: { temperature: number; maxNewTokens: number })
   }
 }
 
-function renderCards(loadedId: ModelId | null, loadingId: ModelId | null): void {
+function renderCards(loadedIds: ModelId[], activeId: ModelId | null, loadingId: ModelId | null): void {
+  const loadedSet = new Set(loadedIds)
   els.cards.forEach((card) => {
     const id = card.dataset.modelId as ModelId | undefined
     if (!id) return
-    const isLoaded = id === loadedId
+    const isLoaded = loadedSet.has(id)
+    const isActive = id === activeId
     const isLoading = id === loadingId
-    card.classList.toggle('is-active', isLoaded)
+    card.classList.toggle('is-active', isActive)
+    card.classList.toggle('is-loaded', isLoaded)
     card.classList.toggle('is-loading', isLoading)
-    const btn = card.querySelector<HTMLButtonElement>('button[data-action="load"]')
+    const btn = card.querySelector<HTMLButtonElement>('button.model-primary')
+    const unloadBtn = card.querySelector<HTMLButtonElement>('button[data-action="unload"]')
+    if (unloadBtn) unloadBtn.hidden = !isLoaded || isLoading
     if (!btn) return
     if (isLoading) {
       btn.textContent = 'Loading…'
+      btn.dataset.action = 'load'
+      btn.disabled = true
+    } else if (isActive) {
+      btn.textContent = 'Active'
+      btn.dataset.action = 'activate'
       btn.disabled = true
     } else if (isLoaded) {
-      btn.textContent = 'Loaded'
-      btn.disabled = true
+      // Resident but not the chat target → one click makes it active (no reload).
+      btn.textContent = 'Use'
+      btn.dataset.action = 'activate'
+      btn.disabled = loadingId !== null
     } else {
       btn.textContent = 'Load'
-      // Disable while ANY load is in flight — don't let the user trigger
-      // a concurrent load that ChatHost will reject.
+      // Only ONE load runs at a time; disable other Loads while one is in flight.
+      btn.dataset.action = 'load'
       btn.disabled = loadingId !== null
     }
   })
@@ -259,23 +271,38 @@ els.loadButtons.forEach((btn) => {
   btn.addEventListener('click', () => {
     const id = btn.dataset.modelId as ModelId | undefined
     if (!id) return
-    // Clear any prior dismissed-error gate so a new failure on this load
-    // gets surfaced. Also wipe the local toast immediately for snappy UX —
-    // the next poll will re-render based on actual status.
     dismissedError = null
-    // Persist the user's choice so the SW auto-warms on next startup.
+    // Remember the active choice so the SW auto-warms it next startup.
     void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: id })
-    void sendInternal({
-      type: 'internal:load',
-      requestId: `popup-load-${Date.now()}`,
-      modelId: id,
-      caller: 'popup',
-    }).then(() => {
-      void poll()
-    })
-    // Also poll immediately so the loadingModelId from the status response
-    // updates the card state without waiting a full second.
+    if (btn.dataset.action === 'activate') {
+      // Already resident → just switch the active chat target (instant).
+      void sendInternal({ type: 'internal:set-active', modelId: id }).then(() => void poll())
+    } else {
+      void sendInternal({
+        type: 'internal:load',
+        requestId: `popup-load-${Date.now()}`,
+        modelId: id,
+        caller: 'popup',
+      }).then(() => void poll())
+    }
     setTimeout(() => void poll(), 50)
+  })
+})
+
+// Per-model unload (frees just that model's GPU memory).
+document.querySelectorAll<HTMLButtonElement>('button[data-action="unload"]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.modelId as ModelId | undefined
+    if (!id) return
+    btn.disabled = true
+    // If we're unloading the remembered/active model, drop the auto-warm memory
+    // so the SW doesn't silently reload it.
+    void chrome.storage.local.get(STORAGE_KEY_MODEL).then((st) => {
+      if (st[STORAGE_KEY_MODEL] === id) void chrome.storage.local.remove(STORAGE_KEY_MODEL)
+    })
+    void sendInternal({ type: 'internal:unload', modelId: id }).then(() => {
+      setTimeout(() => { btn.disabled = false; void poll() }, 150)
+    })
   })
 })
 

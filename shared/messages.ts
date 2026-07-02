@@ -245,9 +245,15 @@ export interface InternalStatusRequest {
 
 export interface InternalStatusResponse {
   type: 'internal:status-response'
+  /** The active chat-target model (alias of activeModelId, back-compat). */
   currentModelId: ModelId | null
+  /** ALL resident models (multiple can be loaded at once). */
+  loadedModelIds: ModelId[]
+  /** Which resident model chats target by default. */
+  activeModelId: ModelId | null
   /** Model id of the in-flight load, if any. null when not loading. */
   loadingModelId: ModelId | null
+  /** True when at least one model is resident. */
   isLoaded: boolean
   queueDepth: number
   /** Currently downloading file path + bytes (when not idle), for the popup. */
@@ -487,6 +493,14 @@ export interface InternalGetTabIdResponse {
  */
 export interface InternalUnloadRequest {
   type: 'internal:unload'
+  /** Unload just this model. Omitted → unload ALL resident models. */
+  modelId?: ModelId
+}
+
+/** Make an already-resident model the active chat target (instant, no reload). */
+export interface InternalSetActiveRequest {
+  type: 'internal:set-active'
+  modelId: ModelId
 }
 
 /**
@@ -608,6 +622,7 @@ export type InternalRequest =
   | InternalAbortRequest
   | InternalStatusRequest
   | InternalUnloadRequest
+  | InternalSetActiveRequest
   | InternalClearCacheRequest
   | InternalSetSettingsRequest
   | InternalPageCheckRequest

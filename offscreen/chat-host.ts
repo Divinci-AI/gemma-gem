@@ -48,6 +48,8 @@ export type LoadProgressFn = (info: {
 }) => void
 
 export interface ChatOptions {
+  /** Which loaded model to generate with. Defaults to the active model. */
+  modelId?: ModelId
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
   maxNewTokens?: number
   temperature?: number
@@ -65,23 +67,17 @@ export interface ChatOptions {
 export type ChatTokenFn = (delta: string) => void
 
 export class ChatHost {
-  private currentModelId: ModelId | null = null
+  // Multiple models can be resident at once (each independently loaded /
+  // unloaded). `activeModelId` is the one chats target by default.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private model: any = null
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private tokenizer: any = null
+  private loaded = new Map<ModelId, { model: any; tokenizer: any }>()
+  private activeModelId: ModelId | null = null
+  // Models whose load was cancelled (unloaded) mid-flight — the resolving
+  // _load() sees this and discards its result instead of adding to the map.
+  private unloadedDuringLoad = new Set<ModelId>()
   private loading: Promise<void> | null = null
   /** Model id of the in-flight load (if any). null when not loading. */
   private loadingModelId: ModelId | null = null
-  /**
-   * Generation counter that distinguishes "this load is current" from
-   * "this load was superseded by a dispose() call". dispose() bumps it.
-   * After from_pretrained resolves we compare the counter we captured at
-   * load-start against the current value — if they differ, dispose ran
-   * during our load and we discard the result rather than re-installing
-   * the model after the user explicitly asked to unload.
-   */
-  private loadGeneration = 0
   /**
    * Last load failure reason. Cleared at the start of every load() and
    * on successful completion. Surfaced to the popup via the status
@@ -101,8 +97,23 @@ export class ChatHost {
   private pending = 0
 
   isLoaded(modelId?: ModelId): boolean {
-    if (!this.model) return false
-    return modelId == null || modelId === this.currentModelId
+    return modelId == null ? this.loaded.size > 0 : this.loaded.has(modelId)
+  }
+
+  /** All currently-resident model ids. */
+  loadedModelIds(): ModelId[] {
+    return [...this.loaded.keys()]
+  }
+
+  getActiveModelId(): ModelId | null {
+    return this.activeModelId
+  }
+
+  /** Make an already-loaded model the active chat target (instant, no reload). */
+  setActive(modelId: ModelId): boolean {
+    if (!this.loaded.has(modelId)) return false
+    this.activeModelId = modelId
+    return true
   }
 
   getLoadingModelId(): ModelId | null {
@@ -114,18 +125,19 @@ export class ChatHost {
   }
 
   async load(modelId: ModelId, onProgress?: LoadProgressFn): Promise<void> {
-    if (this.isLoaded(modelId)) return
-    // Concurrent load of a DIFFERENT model is a UX bug if silently joined
-    // to the in-flight one (caller never sees their model load). Reject
-    // with a clear message; popup catches this and shows the error toast.
+    // Already resident → just make it the active chat target (instant switch).
+    if (this.loaded.has(modelId)) { this.activeModelId = modelId; return }
+    // One load at a time (single GPU). A different model already loading →
+    // reject clearly; the same model already loading → join it.
     if (this.loading && this.loadingModelId !== modelId) {
       throw new Error(
-        `Already loading ${this.loadingModelId}; wait for it or unload first`
+        `Already loading ${this.loadingModelId}; wait for it to finish first`
       )
     }
     if (this.loading) return this.loading
     this.lastError = null
     this.loadingModelId = modelId
+    this.unloadedDuringLoad.delete(modelId)
     this.loading = this._load(modelId, onProgress)
       .catch((e) => {
         this.lastError = (e as Error).message ?? String(e)
@@ -142,14 +154,7 @@ export class ChatHost {
     const config = MODELS[modelId]
     if (!config) throw new Error(`Unknown modelId: ${modelId}`)
 
-    if (this.model && this.currentModelId !== modelId) {
-      log.info(`Unloading ${this.currentModelId} before loading ${modelId}`)
-      await this.dispose()
-    }
-
-    // Snapshot the current generation BEFORE awaiting from_pretrained so
-    // we can detect a dispose-during-load race below.
-    const myGeneration = this.loadGeneration
+    // NOTE: does NOT dispose other resident models — multiple can coexist.
     log.info(`Loading ${modelId} (${config.hfModelId} @ ${config.revision} dtype=${config.dtype})`)
 
     let totalLoaded = 0
@@ -189,22 +194,19 @@ export class ChatHost {
         }),
       ])
 
-      // Generation check: dispose() bumps loadGeneration. If it ran while
-      // we were awaiting from_pretrained, the user has explicitly asked
-      // to unload — don't re-install the model state, just dispose the
-      // newly-loaded one and exit. Without this check the dispose silently
-      // gets undone by our late assignments.
-      if (myGeneration !== this.loadGeneration) {
-        log.info(`Load of ${modelId} superseded by dispose; discarding result`)
+      // If the user unloaded THIS model while it was loading, discard the
+      // freshly-loaded result instead of adding it to the resident map.
+      if (this.unloadedDuringLoad.has(modelId)) {
+        this.unloadedDuringLoad.delete(modelId)
+        log.info(`Load of ${modelId} superseded by unload; discarding result`)
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         try { await (model as any)?.dispose?.() } catch (e) { log.warn('discard-dispose threw', e) }
         return
       }
 
-      this.tokenizer = tokenizer
-      this.model = model
-      this.currentModelId = modelId
-      log.info(`Loaded ${modelId}`)
+      this.loaded.set(modelId, { model, tokenizer })
+      this.activeModelId = modelId // newly loaded becomes the active target
+      log.info(`Loaded ${modelId} (${this.loaded.size} resident)`)
     } finally {
       // Clear the download bar regardless of success/failure/supersession.
       // Bug 1 fix: previously this only ran on success, so a failed load
@@ -244,7 +246,10 @@ export class ChatHost {
     tokensGenerated: number
     durationMs: number
   }> {
-    if (!this.model || !this.tokenizer) throw new Error('Model not loaded — call load() first')
+    const targetId = opts.modelId ?? this.activeModelId
+    if (!targetId || !this.loaded.has(targetId)) {
+      throw new Error('Model not loaded — call load() first')
+    }
 
     this.pending += 1
     // Append our work as the new tail. Suppress prior-chat errors at the
@@ -252,7 +257,7 @@ export class ChatHost {
     // after it. Each caller still sees its own errors via the returned promise.
     const myWork = this.chatQueueTail
       .catch(() => undefined)
-      .then(() => this.runChat(opts, onToken))
+      .then(() => this.runChat(opts, onToken, targetId))
     this.chatQueueTail = myWork.catch(() => undefined)
     try {
       return await myWork
@@ -261,11 +266,14 @@ export class ChatHost {
     }
   }
 
-  private async runChat(opts: ChatOptions, onToken: ChatTokenFn): Promise<{
+  private async runChat(opts: ChatOptions, onToken: ChatTokenFn, modelId: ModelId): Promise<{
     fullText: string
     tokensGenerated: number
     durationMs: number
   }> {
+    const entry = this.loaded.get(modelId)
+    if (!entry) throw new Error(`Model ${modelId} not loaded`)
+    const { model, tokenizer } = entry
     const start = Date.now()
     let tokensGenerated = 0
     let fullText = ''
@@ -274,13 +282,11 @@ export class ChatHost {
       // Per-model chat-template override (e.g. LFM2.5, whose shipped template uses
       // a Jinja `{% generation %}` block tjs 4.2.0 can't parse). Falls back to the
       // tokenizer's own template when the model config declares none.
-      const templateOverride = this.currentModelId
-        ? MODELS[this.currentModelId]?.chatTemplate
-        : undefined
+      const templateOverride = MODELS[modelId]?.chatTemplate
       // Diagnostic (offscreen console): confirms which model + whether the
       // per-model chat-template override is active for this turn.
-      console.warn(`[divinci] chat turn model=${this.currentModelId} templateOverride=${templateOverride ? 'yes' : 'no'}`)
-      const inputs = this.tokenizer.apply_chat_template(opts.messages, {
+      console.warn(`[divinci] chat turn model=${modelId} templateOverride=${templateOverride ? 'yes' : 'no'}`)
+      const inputs = tokenizer.apply_chat_template(opts.messages, {
         add_generation_prompt: true,
         tokenize: true,
         return_tensor: true,
@@ -298,7 +304,7 @@ export class ChatHost {
       // never returns and never throws, so the chat sits on '…' forever). Cleared
       // on the first token (a slow-but-working generation is fine).
       let clearWatch: () => void = () => {}
-      const streamer = new TextStreamer(this.tokenizer, {
+      const streamer = new TextStreamer(tokenizer, {
         skip_prompt: true,
         skip_special_tokens: true,
         callback_function: (text: string) => {
@@ -329,7 +335,7 @@ export class ChatHost {
       const watchdog = new Promise<never>((_, reject) => {
         const t = setTimeout(() => {
           reject(new Error(
-            `No output from ${this.currentModelId} in ${NO_TOKEN_TIMEOUT_MS / 1000}s — ` +
+            `No output from ${modelId} in ${NO_TOKEN_TIMEOUT_MS / 1000}s — ` +
             `generation appears stuck (possible WebGPU/runtime incompatibility). ` +
             `Open the extension's offscreen console for details.`
           ))
@@ -339,7 +345,7 @@ export class ChatHost {
       // If generate resolves first, cancel the watchdog. If it hangs with no
       // token, the watchdog rejects → surfaces a real error instead of '…'.
       await Promise.race([
-        this.model.generate(generateOpts).then((r: unknown) => { clearWatch(); return r }),
+        model.generate(generateOpts).then((r: unknown) => { clearWatch(); return r }),
         watchdog,
       ])
 
@@ -362,21 +368,32 @@ export class ChatHost {
     return false
   }
 
-  async dispose(): Promise<void> {
-    // Bump generation FIRST so any in-flight _load (awaiting from_pretrained
-    // right now) sees the change when it resumes and discards its result
-    // instead of re-installing the model state we're about to clear.
-    this.loadGeneration += 1
-    if (this.model?.dispose) {
-      try {
-        await this.model.dispose()
-      } catch (e) {
-        log.warn('model.dispose() threw', e)
+  /** Unload ONE resident model (frees its GPU memory). If it was active, the
+   *  next remaining resident model becomes active (or none). */
+  async unload(modelId: ModelId): Promise<void> {
+    // If it's mid-load, mark it so the resolving _load discards its result.
+    if (this.loadingModelId === modelId) this.unloadedDuringLoad.add(modelId)
+    const entry = this.loaded.get(modelId)
+    if (entry?.model?.dispose) {
+      try { await entry.model.dispose() } catch (e) { log.warn('model.dispose() threw', e) }
+    }
+    this.loaded.delete(modelId)
+    if (this.activeModelId === modelId) {
+      const rest = [...this.loaded.keys()]
+      this.activeModelId = rest.length > 0 ? rest[0] : null
+    }
+  }
+
+  /** Unload ALL resident models. */
+  async unloadAll(): Promise<void> {
+    if (this.loadingModelId) this.unloadedDuringLoad.add(this.loadingModelId)
+    for (const [, entry] of this.loaded) {
+      if (entry.model?.dispose) {
+        try { await entry.model.dispose() } catch (e) { log.warn('model.dispose() threw', e) }
       }
     }
-    this.model = null
-    this.tokenizer = null
-    this.currentModelId = null
+    this.loaded.clear()
+    this.activeModelId = null
     this.activeStopper = null
     this.chatQueueTail = Promise.resolve()
     this.pending = 0
@@ -384,7 +401,13 @@ export class ChatHost {
     this.lastError = null
   }
 
+  /** Back-compat alias: dispose() unloads everything. */
+  async dispose(): Promise<void> {
+    return this.unloadAll()
+  }
+
+  /** The active chat-target model id (back-compat name). */
   getCurrentModelId(): ModelId | null {
-    return this.currentModelId
+    return this.activeModelId
   }
 }

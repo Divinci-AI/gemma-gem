@@ -580,6 +580,34 @@ header h1 {
   cursor: not-allowed;
 }
 
+/* Per-card action group (primary + small per-model unload). */
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.model-primary.is-active,
+.model-card.is-active .model-primary {
+  background: var(--c-surface);
+  border-color: var(--c-accent);
+  color: var(--c-accent);
+}
+.model-unload {
+  border: 1px solid #4a3a3a;
+  background: transparent;
+  color: #ff8a8a;
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.model-unload:hover { background: #2a1a1a; }
+.model-unload[hidden] { display: none; }
+/* A resident-but-not-active model card gets a subtle left accent. */
+.model-card.is-loaded:not(.is-active) { border-color: #3a4a5a; }
+
 .unload-action {
   width: calc(100% - 16px);
   margin: 12px 8px 4px;

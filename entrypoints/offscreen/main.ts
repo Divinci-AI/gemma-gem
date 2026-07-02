@@ -227,6 +227,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     // late tokens out of fullText for the response event.
     const result = await host.chat(
       {
+        modelId: req.modelId,
         messages: req.messages,
         // User-configurable defaults via the popup are fallbacks; per-call
         // params from chat.divinci.app override. ?? short-circuits only on
@@ -371,6 +372,8 @@ chrome.runtime.onMessage.addListener(
       const resp: InternalStatusResponse = {
         type: 'internal:status-response',
         currentModelId: host.getCurrentModelId(),
+        loadedModelIds: host.loadedModelIds(),
+        activeModelId: host.getActiveModelId(),
         loadingModelId: host.getLoadingModelId(),
         isLoaded: host.isLoaded(),
         queueDepth: host.getQueueDepth(),
@@ -383,7 +386,13 @@ chrome.runtime.onMessage.addListener(
       return true
     }
     case 'internal:unload':
-      void host.dispose().catch((e) => log.error('unload failed:', e))
+      void (message.modelId
+        ? host.unload(message.modelId)
+        : host.unloadAll()
+      ).catch((e) => log.error('unload failed:', e))
+      break
+    case 'internal:set-active':
+      host.setActive(message.modelId)
       break
     case 'internal:clear-cache':
       void clearAllCaches().then(() => recomputeCacheBreakdown())

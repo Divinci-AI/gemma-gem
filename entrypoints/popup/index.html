@@ -82,7 +82,10 @@
           </strong>
           <span class="model-size">~2.9 GB · text-only · <span class="model-cache-detail" data-cache-detail="gemma-4-e2b">not cached — first load downloads</span></span>
         </div>
-        <button class="model-action" data-action="load" data-model-id="gemma-4-e2b">Load</button>
+        <div class="model-actions">
+          <button class="model-action model-primary" data-action="load" data-model-id="gemma-4-e2b">Load</button>
+          <button class="model-unload" data-action="unload" data-model-id="gemma-4-e2b" hidden title="Unload from GPU" aria-label="Unload from GPU">✕</button>
+        </div>
       </div>
       <div class="model-card" data-model-id="lfm2.5-230m">
         <div class="model-meta">
@@ -91,7 +94,10 @@
           </strong>
           <span class="model-size">~211 MB · instant download · <span class="model-cache-detail" data-cache-detail="lfm2.5-230m">not cached — first load downloads</span></span>
         </div>
-        <button class="model-action" data-action="load" data-model-id="lfm2.5-230m">Load</button>
+        <div class="model-actions">
+          <button class="model-action model-primary" data-action="load" data-model-id="lfm2.5-230m">Load</button>
+          <button class="model-unload" data-action="unload" data-model-id="lfm2.5-230m" hidden title="Unload from GPU" aria-label="Unload from GPU">✕</button>
+        </div>
       </div>
       <div class="model-card" data-model-id="gemma-4-e2b-qat">
         <div class="model-meta">
@@ -100,9 +106,12 @@
           </strong>
           <span class="model-size">~3.2 GB · best 4-bit quality · <span class="model-cache-detail" data-cache-detail="gemma-4-e2b-qat">not cached — first load downloads</span></span>
         </div>
-        <button class="model-action" data-action="load" data-model-id="gemma-4-e2b-qat">Load</button>
+        <div class="model-actions">
+          <button class="model-action model-primary" data-action="load" data-model-id="gemma-4-e2b-qat">Load</button>
+          <button class="model-unload" data-action="unload" data-model-id="gemma-4-e2b-qat" hidden title="Unload from GPU" aria-label="Unload from GPU">✕</button>
+        </div>
       </div>
-      <button id="unload-btn" class="unload-action" hidden>Unload model from GPU</button>
+      <button id="unload-btn" class="unload-action" hidden>Unload all models</button>
     </section>
 
     <section id="settings">

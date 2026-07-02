@@ -320,3 +320,57 @@ describe('ChatHost queue', () => {
     expect(host.getLastError()).toBeNull()
   })
 })
+
+describe('ChatHost multi-model', () => {
+  it('loads multiple models simultaneously — both stay resident', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    await host.load('lfm2.5-230m')
+    expect(host.isLoaded('gemma-4-e2b')).toBe(true)
+    expect(host.isLoaded('lfm2.5-230m')).toBe(true)
+    expect(host.loadedModelIds().sort()).toEqual(['gemma-4-e2b', 'lfm2.5-230m'])
+    // The most recently loaded becomes the active chat target.
+    expect(host.getActiveModelId()).toBe('lfm2.5-230m')
+  })
+
+  it('setActive switches the chat target without unloading (instant)', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    await host.load('lfm2.5-230m')
+    expect(host.setActive('gemma-4-e2b')).toBe(true)
+    expect(host.getActiveModelId()).toBe('gemma-4-e2b')
+    // both still resident
+    expect(host.loadedModelIds().length).toBe(2)
+    // setActive on a non-resident model is a no-op
+    expect(host.setActive('gemma-4-e2b-qat')).toBe(false)
+  })
+
+  it('load() of an already-resident model just activates it (no reload)', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    await host.load('lfm2.5-230m')
+    await host.load('gemma-4-e2b') // resident → activate
+    expect(host.getActiveModelId()).toBe('gemma-4-e2b')
+    expect(host.loadedModelIds().length).toBe(2)
+  })
+
+  it('unload(modelId) frees just that model; active falls back to a remaining one', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    await host.load('lfm2.5-230m') // active
+    await host.unload('lfm2.5-230m')
+    expect(host.isLoaded('lfm2.5-230m')).toBe(false)
+    expect(host.isLoaded('gemma-4-e2b')).toBe(true)
+    expect(host.getActiveModelId()).toBe('gemma-4-e2b') // fell back
+  })
+
+  it('unloadAll clears everything', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    await host.load('lfm2.5-230m')
+    await host.unloadAll()
+    expect(host.loadedModelIds()).toEqual([])
+    expect(host.getActiveModelId()).toBeNull()
+    expect(host.isLoaded()).toBe(false)
+  })
+})
