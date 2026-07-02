@@ -109,6 +109,8 @@ export type DivinciExternalRequest =
 export interface DivinciExternalLoadProgressEvent {
   type: 'divinci:load-progress'
   requestId: string
+  /** Which model is loading — lets the SW mirror load state cross-surface. */
+  modelId?: string
   fraction: number | null
   bytesLoaded: number
   bytesTotal: number | null
@@ -136,6 +138,7 @@ export interface DivinciExternalQueuedEvent {
 export interface DivinciExternalLoadDoneEvent {
   type: 'divinci:load-done'
   requestId: string
+  modelId?: string
   loadTimeMs: number
   /** True when this load was served from the Cache API (no network fetch). */
   fromCache?: boolean

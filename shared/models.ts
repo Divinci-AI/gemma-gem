@@ -75,6 +75,13 @@ export const MODELS: Record<ModelId, ModelConfig> = {
 
 export const DEFAULT_MODEL_ID: ModelId = 'gemma-4-e2b'
 export const STORAGE_KEY_MODEL = 'divinci_local_model_id'
+// Cross-surface load mirror: the SW writes { modelId, at } here the moment ANY
+// surface (popup, dock, popout, web app, auto-warm) starts a model load, and
+// clears it on load-done/error. Lets every surface reflect an in-progress load
+// WITHOUT round-tripping to the offscreen — which, mid-load, is too busy to
+// answer a status poll. Read as a fallback/overlay on top of status.loadingModelId.
+export const STORAGE_KEY_LOADING = 'divinci_local_loading'
+export interface LoadingMirror { modelId: ModelId; at: number }
 export const STORAGE_KEY_SETTINGS = 'divinci_local_settings'
 // Whether the in-page overlay sidebar is open. Shared so the SW can flip it
 // (the "Overlay" panel-mode toggle from the dock/pop-out re-opens the overlay

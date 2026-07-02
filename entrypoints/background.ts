@@ -15,7 +15,7 @@
  * download 3 GB on install.
  */
 
-import { ensureOffscreenDocument } from '@/background/offscreen-manager'
+import { ensureOffscreenDocument, isFromOffscreen, isFromExtensionPage } from '@/background/offscreen-manager'
 import { setupExternalBridge } from '@/background/external-bridge'
 import { setupOpenPageBridge } from '@/background/open-page-bridge'
 import { setupInternalBridge } from '@/background/internal-bridge'
@@ -27,6 +27,7 @@ import { setupPanelModeBridge } from '@/background/panel-mode-bridge'
 import { log } from '@/shared/logger'
 import {
   STORAGE_KEY_MODEL,
+  STORAGE_KEY_LOADING,
   STORAGE_KEY_SETTINGS,
   STORAGE_KEY_WARM_STATE,
   STORAGE_KEY_WARM_PENDING_AT,
@@ -106,10 +107,20 @@ async function autoWarmIfRemembered(): Promise<void> {
  * startup treats as the crash signal.
  */
 function setupWarmStateTracking(): void {
-  chrome.runtime.onMessage.addListener((msg: Message) => {
+  chrome.runtime.onMessage.addListener((msg: Message, sender) => {
     const m = msg as { type?: string; caller?: string; event?: { type?: string } }
     if (m?.type !== 'internal:event') return
+    if (!isFromOffscreen(sender)) return // only the offscreen doc emits load events
     const evType = m.event?.type
+    const evModelId = (m.event as { modelId?: string } | undefined)?.modelId
+    // Cross-surface load mirror: any surface reflects an in-progress load via
+    // STORAGE_KEY_LOADING without polling the (busy) offscreen. Set on the first
+    // progress tick, cleared when the load settles.
+    if (evType === 'divinci:load-progress' && evModelId) {
+      void chrome.storage.local.set({ [STORAGE_KEY_LOADING]: { modelId: evModelId, at: Date.now() } })
+    } else if (evType === 'divinci:load-done' || evType === 'divinci:error') {
+      void chrome.storage.local.remove(STORAGE_KEY_LOADING)
+    }
     if (evType === 'divinci:load-done') {
       void chrome.storage.local.set({ [STORAGE_KEY_WARM_STATE]: 'ok' satisfies WarmState })
     } else if (evType === 'divinci:error' && m.caller === 'autowarm') {
@@ -126,8 +137,11 @@ function setupWarmStateTracking(): void {
  * onto the stored value so one field doesn't clobber the other.
  */
 function setupSettingsPersistence(): void {
-  chrome.runtime.onMessage.addListener((msg: Message) => {
+  chrome.runtime.onMessage.addListener((msg: Message, sender) => {
     if ((msg as InternalSetSettingsRequest)?.type !== 'internal:set-settings') return
+    // Only our own extension pages (popup/panel) persist settings — never a
+    // content script, which could otherwise overwrite stored API keys.
+    if (!isFromExtensionPage(sender)) return
     const m = msg as InternalSetSettingsRequest
     void chrome.storage.local.get(STORAGE_KEY_SETTINGS).then((stored) => {
       const prev = (stored[STORAGE_KEY_SETTINGS] as Partial<UserSettings>) ?? {}

@@ -36,9 +36,11 @@ import {
   STORAGE_KEY_OPEN,
   STORAGE_KEY_PANEL_MODE,
   STORAGE_KEY_MODEL,
+  STORAGE_KEY_LOADING,
   PRIVACY_POLICY_URL,
   TERMS_URL,
   type ModelId,
+  type LoadingMirror,
   type UserSettings,
   type PanelSurface,
 } from '@/shared/models'
@@ -253,6 +255,15 @@ export function mountChatPanel(
   let port: chrome.runtime.Port | null = null
   let isLoaded = false
   let isLoading = false
+  // Cross-surface load mirror: which model the SW says is loading (started on
+  // ANY surface). Hydrated at mount + kept live via storage.onChanged.
+  let mirrorLoadingId: ModelId | null = null
+  // Read once at mount in case a load is ALREADY in flight when this panel opens.
+  void chrome.storage.local.get(STORAGE_KEY_LOADING).then((stored) => {
+    const v = stored[STORAGE_KEY_LOADING] as LoadingMirror | undefined
+    mirrorLoadingId = v?.modelId ?? null
+    if (mirrorLoadingId === MODEL_ID) { isLoading = true; renderModelState() }
+  }).catch(() => {})
   // One-shot: auto-load a remembered + on-disk model when the panel finds it
   // unloaded (e.g. after MV3 evicted the SW + offscreen). Cache-load only — never
   // a surprise download. See maybeAutoLoadModel.
@@ -1087,7 +1098,10 @@ export function mountChatPanel(
   }
 
   function applyStatus(status: InternalStatusResponse): void {
-    isLoading = status.loadingModelId != null
+    // A load of OUR model started on another surface (e.g. the popup) is
+    // mirrored to STORAGE_KEY_LOADING by the SW; reflect it even before this
+    // surface's own status catches up.
+    isLoading = status.loadingModelId != null || mirrorLoadingId === MODEL_ID
     isLoaded = status.isLoaded && status.currentModelId === MODEL_ID
 
     if (isLoading && status.loadProgress) {
@@ -2637,6 +2651,14 @@ export function mountChatPanel(
     area: string,
   ): void => {
     if (area !== 'local') return
+    // A load started/finished on another surface → reflect it here (the popup
+    // did the same). Update the mirror then re-render this panel's load state.
+    if (STORAGE_KEY_LOADING in changes) {
+      const v = changes[STORAGE_KEY_LOADING].newValue as LoadingMirror | undefined
+      mirrorLoadingId = v?.modelId ?? null
+      isLoading = isLoading || mirrorLoadingId === MODEL_ID
+      renderModelState()
+    }
     // Live-update the account chip when the SW writes/clears the token bundle.
     if (STORAGE_KEY_DIVINCI_AUTH in changes) queryAccountStatus()
     // Page-reading toggle changed in the popup → update behavior + disclaimer.

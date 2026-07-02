@@ -16,7 +16,7 @@ import type {
   InternalStatusResponse,
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
-import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId } from '@/shared/models'
+import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_LOADING, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId, type LoadingMirror } from '@/shared/models'
 import {
   STORAGE_KEY_ORIGIN_GRANTS,
   sanitizeGrantMap,
@@ -111,8 +111,20 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
-function render(status: InternalStatusResponse | null): void {
+function render(status: InternalStatusResponse | null, mirrorLoadingId: ModelId | null = null): void {
   if (!status) {
+    // No status from the offscreen — but if the SW mirror says a load is in
+    // flight (offscreen too busy to answer), still show that rather than idle.
+    if (mirrorLoadingId) {
+      const cfg = MODELS[mirrorLoadingId]
+      els.statusModel.textContent = `Loading ${cfg?.label ?? mirrorLoadingId}…`
+      els.statusQueue.textContent = '—'
+      els.statusProgress.hidden = true
+      els.unloadBtn.hidden = true
+      renderCards(null, mirrorLoadingId)
+      renderError(null)
+      return
+    }
     els.statusModel.textContent = 'extension idle'
     els.statusQueue.textContent = '0'
     els.statusProgress.hidden = true
@@ -122,11 +134,15 @@ function render(status: InternalStatusResponse | null): void {
     return
   }
 
+  // Effective loading id: the offscreen's own report wins; fall back to the SW
+  // mirror (a load started on another surface that status hasn't caught yet).
+  const loadingModelId = status.loadingModelId ?? mirrorLoadingId
+
   // "Loaded model" line shows the loaded model OR the loading model OR a
   // not-loaded placeholder, in priority order.
-  if (status.loadingModelId) {
-    const cfg = MODELS[status.loadingModelId]
-    els.statusModel.textContent = `Loading ${cfg?.label ?? status.loadingModelId}…`
+  if (loadingModelId) {
+    const cfg = MODELS[loadingModelId]
+    els.statusModel.textContent = `Loading ${cfg?.label ?? loadingModelId}…`
   } else if (status.currentModelId) {
     const cfg = MODELS[status.currentModelId]
     els.statusModel.textContent = cfg?.label ?? status.currentModelId
@@ -153,7 +169,7 @@ function render(status: InternalStatusResponse | null): void {
   }
 
   els.unloadBtn.hidden = !status.isLoaded
-  renderCards(status.currentModelId, status.loadingModelId)
+  renderCards(status.currentModelId, loadingModelId)
   renderCacheState(status.cacheBreakdown)
   renderError(status.lastError)
   renderSettings(status.settings)
@@ -227,8 +243,16 @@ function renderError(err: string | null): void {
 }
 
 async function poll(): Promise<void> {
-  const status = await sendInternal<InternalStatusResponse>({ type: 'internal:status' })
-  render(status)
+  const [status, stored] = await Promise.all([
+    sendInternal<InternalStatusResponse>({ type: 'internal:status' }),
+    chrome.storage.local.get(STORAGE_KEY_LOADING),
+  ])
+  // The SW mirrors an in-progress load (from ANY surface — dock, popout, web
+  // app, auto-warm) to STORAGE_KEY_LOADING. Pass it as a fallback loading id so
+  // the popup reflects a load it didn't start, even when the offscreen is too
+  // busy loading to answer the status poll (status comes back null).
+  const mirror = stored[STORAGE_KEY_LOADING] as LoadingMirror | undefined
+  render(status, mirror?.modelId ?? null)
 }
 
 els.loadButtons.forEach((btn) => {
@@ -656,6 +680,11 @@ async function revokeOrigin(origin: string): Promise<void> {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local' && (changes[STORAGE_KEY_ORIGIN_GRANTS] || changes[STORAGE_KEY_SITE_CONFIGS])) {
     void loadSiteAccess()
+  }
+  // A load starting/finishing on another surface flips STORAGE_KEY_LOADING —
+  // re-poll so the popup reflects it instantly, not on the next 1s tick.
+  if (area === 'local' && changes[STORAGE_KEY_LOADING]) {
+    void poll()
   }
 })
 

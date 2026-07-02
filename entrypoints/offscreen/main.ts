@@ -145,6 +145,7 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
       emit(req.caller, {
         type: 'divinci:load-progress',
         requestId: req.requestId,
+        modelId: req.modelId,
         fraction: info.fraction,
         bytesLoaded: info.bytesLoaded,
         bytesTotal: info.bytesTotal,
@@ -159,6 +160,7 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
     emit(req.caller, {
       type: 'divinci:load-done',
       requestId: req.requestId,
+      modelId: req.modelId,
       loadTimeMs: Date.now() - start,
       fromCache,
     })
