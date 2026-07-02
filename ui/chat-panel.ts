@@ -188,6 +188,8 @@ export function mountChatPanel(
     statusDot: root.querySelector<HTMLElement>('.dls-status-dot')!,
     pagePill: root.querySelector<HTMLElement>('.dls-page-pill')!,
     modelChip: root.querySelector<HTMLButtonElement>('.dls-model-chip')!,
+    modelChipWrap: root.querySelector<HTMLElement>('.dls-model-chip-wrap')!,
+    modelMenu: root.querySelector<HTMLElement>('.dls-model-menu')!,
     accountChip: root.querySelector<HTMLButtonElement>('.dls-account-chip')!,
     accountAvatar: root.querySelector<HTMLImageElement>('.dls-account-avatar')!,
     accountFallback: root.querySelector<HTMLElement>('.dls-account-fallback')!,
@@ -207,6 +209,7 @@ export function mountChatPanel(
     send: root.querySelector<HTMLButtonElement>('.dls-send')!,
     mic: root.querySelector<HTMLButtonElement>('.dls-mic')!,
     disclaimerText: root.querySelector<HTMLElement>('.dls-disclaimer-text')!,
+    emptyTitle: root.querySelector<HTMLElement>('.dls-empty-title')!,
   }
   // Model identity (chip + load hint) re-renders whenever MODEL_ID changes.
   // replaceChildren (not innerHTML) keeps us off the HTML-injection path; the
@@ -223,6 +226,13 @@ export function mountChatPanel(
     chipLabel.textContent = MODELS[MODEL_ID].label
     el.modelChip.append(chipLogo, chipLabel)
     el.modelSelect.value = MODEL_ID
+    // Model-named UI copy follows the ACTIVE model (not a hardcoded "Gemma 4").
+    const short = MODELS[MODEL_ID].shortLabel
+    el.emptyTitle.textContent = `Ask ${short} anything`
+    // Only rewrite the placeholder when it's the ready "Message X…" form —
+    // renderModelState owns the not-loaded placeholder ("Load the model…").
+    if (el.input.placeholder.startsWith('Message ')) el.input.placeholder = `Message ${short}…`
+    renderDisclaimer()
   }
   // Populate the Load-card model picker from the registry (once).
   for (const cfg of Object.values(MODELS)) {
@@ -328,10 +338,10 @@ export function mountChatPanel(
         'Page reading is off — Gemma only sees the page title & URL.'
     } else if (!urlIndexDecision(deps.host.pageHref()).allow) {
       el.disclaimerText.textContent =
-        'This page is sensitive, so Gemma is not reading its content.'
+        `This page is sensitive, so ${MODELS[MODEL_ID].shortLabel} is not reading its content.`
     } else {
       el.disclaimerText.textContent =
-        "Gemma reads this page's text on your device to answer."
+        `${MODELS[MODEL_ID].shortLabel} reads this page's text on your device to answer.`
     }
   }
 
@@ -918,8 +928,64 @@ export function mountChatPanel(
       /* extension context gone */
     }
   }
-  el.modelChip.addEventListener('click', requestOpenPopup)
   el.accountChip.addEventListener('click', requestOpenPopup)
+
+  // ---- Model switch dropdown (from the header chip) ----------------------
+  // Clicking the model chip opens an in-panel menu to switch the active model
+  // directly — no full popup. Selecting a model loads it (switch); the offscreen
+  // disposes the current + loads the chosen one (cached ones in seconds).
+  function renderModelMenu(): void {
+    el.modelMenu.replaceChildren()
+    for (const cfg of Object.values(MODELS)) {
+      const item = document.createElement('button')
+      item.type = 'button'
+      item.className = 'dls-model-menu-item'
+      item.setAttribute('role', 'menuitemradio')
+      const active = cfg.id === MODEL_ID
+      item.setAttribute('aria-checked', active ? 'true' : 'false')
+      if (active) item.classList.add('is-active')
+      const check = document.createElement('span')
+      check.className = 'dls-model-menu-check'
+      check.textContent = active ? '✓' : ''
+      const name = document.createElement('span')
+      name.className = 'dls-model-menu-name'
+      name.textContent = cfg.label
+      const size = document.createElement('span')
+      size.className = 'dls-model-menu-size'
+      size.textContent = cfg.downloadSize
+      item.append(check, name, size)
+      item.addEventListener('click', () => {
+        closeModelMenu()
+        if (cfg.id === MODEL_ID && isLoaded) return
+        MODEL_ID = cfg.id
+        void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
+        renderModelIdentity()
+        loadModel()
+      })
+      el.modelMenu.append(item)
+    }
+  }
+  function openModelMenu(): void {
+    renderModelMenu()
+    el.modelMenu.hidden = false
+    el.modelChip.setAttribute('aria-expanded', 'true')
+    // Close on the next outside click (added async so this click doesn't catch it).
+    setTimeout(() => document.addEventListener('click', onOutsideMenuClick, { once: true }), 0)
+  }
+  function closeModelMenu(): void {
+    el.modelMenu.hidden = true
+    el.modelChip.setAttribute('aria-expanded', 'false')
+    document.removeEventListener('click', onOutsideMenuClick)
+  }
+  function onOutsideMenuClick(e: MouseEvent): void {
+    if (!el.modelChipWrap.contains(e.target as Node)) closeModelMenu()
+    else setTimeout(() => document.addEventListener('click', onOutsideMenuClick, { once: true }), 0)
+  }
+  el.modelChip.addEventListener('click', (e) => {
+    e.stopPropagation()
+    if (el.modelMenu.hidden) openModelMenu()
+    else closeModelMenu()
+  })
 
   // ---- WWW RAG page status -------------------------------------------------
   // On each nav: apply the client url-policy first (never send sensitive /
@@ -2246,7 +2312,7 @@ export function mountChatPanel(
       el.loadCard.hidden = true
       el.progress.hidden = true
       el.input.disabled = false
-      el.input.placeholder = 'Message Gemma 4…'
+      el.input.placeholder = `Message ${MODELS[MODEL_ID].shortLabel}…`
     } else if (isLoading) {
       el.statusDot.dataset.state = 'loading'
       el.statusDot.title = 'Loading model…'
@@ -2812,7 +2878,10 @@ const TEMPLATE = /* html */ `
         </span>
         <span class="dls-title-text">Divinci Local</span>
         <span class="dls-page-pill" data-state="unknown" hidden></span>
-        <button class="dls-model-chip" type="button" title="Open Divinci Local settings"></button>
+        <span class="dls-model-chip-wrap">
+          <button class="dls-model-chip" type="button" aria-haspopup="menu" aria-expanded="false" title="Switch model"></button>
+          <div class="dls-model-menu" role="menu" hidden></div>
+        </span>
       </div>
       <div class="dls-header-actions">
         <div class="dls-menu-wrap">
@@ -3413,6 +3482,45 @@ export const SIDEBAR_CSS = /* css */ `
 
   /* Model + account chips now live inline in .dls-header (the standalone
      .dls-chips subheader row was removed). */
+  .dls-model-chip-wrap { position: relative; display: inline-flex; }
+  .dls-model-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
+    min-width: 220px;
+    padding: 4px;
+    background: var(--dls-bg-2);
+    border: 1px solid var(--dls-border);
+    border-radius: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .dls-model-menu[hidden] { display: none; }
+  .dls-model-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 9px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--dls-text);
+    font: inherit;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .dls-model-menu-item:hover { background: var(--dls-bg); }
+  .dls-model-menu-item.is-active { background: var(--dls-accent); color: var(--dls-accent-text, #fff); }
+  .dls-model-menu-check { width: 12px; flex: 0 0 auto; font-size: 11px; }
+  .dls-model-menu-name { flex: 1 1 auto; white-space: nowrap; }
+  .dls-model-menu-size { flex: 0 0 auto; font-size: 10.5px; opacity: 0.65; }
+  .dls-model-menu-item.is-active .dls-model-menu-size { opacity: 0.85; }
+
   .dls-model-chip {
     display: inline-flex;
     align-items: center;

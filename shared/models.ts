@@ -17,6 +17,8 @@ export interface ModelConfig {
   /** Pinned HuggingFace commit SHA. */
   revision: string
   label: string
+  /** Short display name for inline UI copy ("Ask X anything", "Message X…"). */
+  shortLabel: string
   downloadSize: string
   /**
    * Quantization dtype. q4f16 is smaller than q4 (2.9 GB vs 3.4 GB) and
@@ -36,6 +38,7 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     hfModelId: 'onnx-community/gemma-4-E2B-it-ONNX',
     revision: '9f4bef82ea6e296bc69f8a2f5939f73af81b07a6',
     label: 'Gemma 4 E2B',
+    shortLabel: 'Gemma 4',
     downloadSize: '~2.9 GB',
     dtype: 'q4f16',
     contextLimit: 32_768,
@@ -51,6 +54,7 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     hfModelId: 'nico-martin/gemma-4-E2B-it-qat-q4-ONNX',
     revision: 'f83a0fb4825956b3d87687a30b7716e8692f1f70',
     label: 'Gemma 4 E2B QAT',
+    shortLabel: 'Gemma 4 QAT',
     downloadSize: '~3.2 GB',
     dtype: 'q4',
     contextLimit: 32_768,
@@ -66,6 +70,7 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     hfModelId: 'LiquidAI/LFM2.5-230M-ONNX',
     revision: 'c6f46e4e3f885ebcad164d14059a49f90e27eb4d',
     label: 'LFM2.5 230M (Lite)',
+    shortLabel: 'LFM2.5',
     downloadSize: '~211 MB',
     dtype: 'q4',
     contextLimit: 32_768,
