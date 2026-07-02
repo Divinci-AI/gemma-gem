@@ -28,9 +28,26 @@ export interface ModelConfig {
    */
   dtype: 'q4' | 'q4f16' | 'q8' | 'fp16'
   contextLimit: number
+  /**
+   * Optional chat-template override. Some models ship a Jinja chat_template that
+   * transformers.js 4.2.0's bundled jinja can't parse (e.g. LFM2.5 uses the
+   * `{% generation %}` block → "Unknown statement type generation" → chat throws
+   * → no response). Provide an inference-equivalent template here to bypass it.
+   */
+  chatTemplate?: string
   /** Cache-busting version. Bump on revision change. */
   version: number
 }
+
+// Minimal ChatML template for LFM2.5 (im_start/im_end + bos), equivalent to its
+// shipped template for inference but WITHOUT the `{% generation %}` block that
+// tjs 4.2.0's jinja rejects. Verified end-to-end: generates coherently.
+const LFM2_CHATML_TEMPLATE =
+  "{{- bos_token -}}" +
+  "{%- for message in messages -%}" +
+  "{{- '<|im_start|>' + message.role + '\n' + message.content + '<|im_end|>\n' -}}" +
+  "{%- endfor -%}" +
+  "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\n' -}}{%- endif -%}";
 
 export const MODELS: Record<ModelId, ModelConfig> = {
   'gemma-4-e2b': {
@@ -74,6 +91,7 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     downloadSize: '~211 MB',
     dtype: 'q4',
     contextLimit: 32_768,
+    chatTemplate: LFM2_CHATML_TEMPLATE,
     version: 1,
   },
 }

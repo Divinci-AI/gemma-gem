@@ -57,7 +57,7 @@ import { ChatController } from '@/chat-core/chat-controller'
 import { LocalTranscriptStore } from '@/chat-core/local-transcript-store'
 import { resolveActiveConvId, setTabActive } from '@/chat-core/tab-session'
 import { normalizePageText } from '@/chat-core/page-extract'
-import { GEMMA_LOGO_DATA_URI } from '@/shared/gemma-logo'
+import { logoForModel, logoAltForModel } from '@/shared/model-logos'
 import { ChromeStorageConversationBackend } from '@/chat-core/chrome-storage-conversation-backend'
 import { renderMarkdown } from '@/chat-core/markdown'
 import { conversationToMarkdown, conversationToJson, filenameSlug } from '@/chat-core/share'
@@ -226,7 +226,7 @@ export function mountChatPanel(
     el.loadHint.textContent = `${MODELS[MODEL_ID].label} · ${MODELS[MODEL_ID].downloadSize} · first load downloads`
     el.modelChip.replaceChildren()
     const chipLogo = document.createElement('img')
-    chipLogo.src = GEMMA_LOGO_DATA_URI
+    chipLogo.src = logoForModel(MODEL_ID)
     chipLogo.alt = ''
     chipLogo.className = 'dls-model-chip-logo'
     const chipLabel = document.createElement('span')
@@ -972,6 +972,10 @@ export function mountChatPanel(
   function openModelMenu(): void {
     renderModelMenu()
     el.modelMenu.hidden = false
+    // Position under the chip in viewport coords (menu is position:fixed).
+    const r = el.modelChip.getBoundingClientRect()
+    el.modelMenu.style.top = `${Math.round(r.bottom + 6)}px`
+    el.modelMenu.style.left = `${Math.round(r.left)}px`
     el.modelChip.setAttribute('aria-expanded', 'true')
     // Close on the next outside click (added async so this click doesn't catch it).
     setTimeout(() => document.addEventListener('click', onOutsideMenuClick, { once: true }), 0)
@@ -1777,8 +1781,8 @@ export function mountChatPanel(
     } else {
       av.className = 'dls-avatar dls-avatar-gemma'
       const img = document.createElement('img')
-      img.alt = 'Gemma'
-      img.src = GEMMA_LOGO_DATA_URI
+      img.alt = logoAltForModel(MODEL_ID)
+      img.src = logoForModel(MODEL_ID)
       av.appendChild(img)
     }
     return av
@@ -3488,10 +3492,10 @@ export const SIDEBAR_CSS = /* css */ `
      .dls-chips subheader row was removed). */
   .dls-model-chip-wrap { position: relative; display: inline-flex; }
   .dls-model-menu {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 20;
+    /* fixed, not absolute: .dls-title has overflow:hidden (title ellipsis), which
+       clipped an absolutely-positioned menu. Coords set from the chip rect on open. */
+    position: fixed;
+    z-index: 2147483646;
     min-width: 220px;
     padding: 4px;
     background: var(--dls-bg-2);

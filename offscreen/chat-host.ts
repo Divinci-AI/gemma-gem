@@ -271,11 +271,18 @@ export class ChatHost {
     let fullText = ''
 
     try {
+      // Per-model chat-template override (e.g. LFM2.5, whose shipped template uses
+      // a Jinja `{% generation %}` block tjs 4.2.0 can't parse). Falls back to the
+      // tokenizer's own template when the model config declares none.
+      const templateOverride = this.currentModelId
+        ? MODELS[this.currentModelId]?.chatTemplate
+        : undefined
       const inputs = this.tokenizer.apply_chat_template(opts.messages, {
         add_generation_prompt: true,
         tokenize: true,
         return_tensor: true,
         return_dict: true,
+        ...(templateOverride ? { chat_template: templateOverride } : {}),
         // Forward-compatible: templates that don't use `tools` ignore it.
         // Gemma 4's template renders each tool as a <|tool>declaration:...<tool|>
         // block in the system turn, then the model can emit
