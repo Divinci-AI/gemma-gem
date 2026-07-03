@@ -298,6 +298,14 @@ header h1 {
   border-color: var(--c-accent);
 }
 
+/* Coming-soon (e.g. LFM2.5, blocked on upstream kernels): dimmed + not loadable. */
+.model-card.is-coming-soon {
+  opacity: 0.55;
+}
+.model-card.is-coming-soon .model-primary {
+  cursor: default;
+}
+
 .model-card.is-loading {
   border-color: #7c5ff6;
   background: #1d1a2c;

@@ -41,8 +41,22 @@ export interface ModelConfig {
    * → no response). Provide an inference-equivalent template here to bypass it.
    */
   chatTemplate?: string
+  /**
+   * When true, the model is shown but NOT loadable — "Coming soon". Use for
+   * models blocked on an upstream fix. LFM2.5's `lfm2` arch has incomplete
+   * transformers.js WebGPU kernels → generation hangs the runtime (no abort, no
+   * watchdog) on real prompts, so it must not be loadable until upstream kernels
+   * land. UI disables Load; auto-warm + default-selection skip it.
+   */
+  comingSoon?: boolean
   /** Cache-busting version. Bump on revision change. */
   version: number
+}
+
+/** First model that is actually loadable (skips `comingSoon`). */
+export function firstAvailableModelId(): ModelId {
+  const first = (Object.values(MODELS).find((m) => !m.comingSoon) ?? MODELS[DEFAULT_MODEL_ID]).id
+  return first
 }
 
 // Minimal ChatML template for LFM2.5 (im_start/im_end + bos), equivalent to its
@@ -98,6 +112,9 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     dtype: 'q4',
     contextLimit: 32_768,
     chatTemplate: LFM2_CHATML_TEMPLATE,
+    // Blocked on upstream lfm2 WebGPU kernels — generation hangs the runtime on
+    // real prompts. Shown as "Coming soon", not loadable, until upstream lands.
+    comingSoon: true,
     version: 1,
   },
   // Kernel-complete small models (llama / qwen2 architectures) — these have

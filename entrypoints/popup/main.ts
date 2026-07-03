@@ -222,6 +222,17 @@ function renderCards(loadedIds: ModelId[], activeId: ModelId | null, loadingId: 
     const unloadBtn = card.querySelector<HTMLButtonElement>('button[data-action="unload"]')
     if (unloadBtn) unloadBtn.hidden = !isLoaded || isLoading
     if (!btn) return
+    // Coming-soon models (e.g. LFM2.5, blocked on upstream kernels) aren't
+    // loadable — show a disabled "Coming soon" button and nothing else.
+    const comingSoon = MODELS[id]?.comingSoon
+    card.classList.toggle('is-coming-soon', !!comingSoon)
+    if (comingSoon) {
+      if (unloadBtn) unloadBtn.hidden = true
+      btn.textContent = 'Coming soon'
+      btn.dataset.action = ''
+      btn.disabled = true
+      return
+    }
     if (isLoading) {
       btn.textContent = 'Loading…'
       btn.dataset.action = 'load'

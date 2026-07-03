@@ -32,6 +32,7 @@ import {
   STORAGE_KEY_WARM_STATE,
   STORAGE_KEY_WARM_PENDING_AT,
   DEFAULT_SETTINGS,
+  MODELS,
   type ModelId,
   type UserSettings,
   type WarmState,
@@ -51,6 +52,17 @@ async function autoWarmIfRemembered(): Promise<void> {
       STORAGE_KEY_WARM_PENDING_AT,
     ])
     const modelId = stored[STORAGE_KEY_MODEL] as ModelId | undefined
+
+    // Never auto-warm a coming-soon model (e.g. LFM2.5) — it isn't loadable and
+    // its generation hangs the runtime; auto-warming it would wedge the offscreen.
+    if (modelId && MODELS[modelId]?.comingSoon) {
+      log.info('Auto-warm skipped: remembered model is coming-soon')
+      // Clear the remembered + loading state off the coming-soon model so no
+      // surface shows it stuck "Loading…" (recovers a wedged prior session) and
+      // nothing auto-loads. The dock falls back to its default; the user picks.
+      await chrome.storage.local.remove([STORAGE_KEY_MODEL, STORAGE_KEY_LOADING])
+      return
+    }
 
     // Crash-loop guard (see STORAGE_KEY_WARM_STATE / decideAutoWarm). The SW
     // re-runs this on every startup, including the ~30s eviction cycle — so a

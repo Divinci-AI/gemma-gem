@@ -284,7 +284,9 @@ export function mountChatPanel(
   // Hydrate from a previously-remembered model (popup load / prior session).
   void chrome.storage.local.get(STORAGE_KEY_MODEL).then((stored) => {
     const remembered = stored[STORAGE_KEY_MODEL] as ModelId | undefined
-    if (remembered && MODELS[remembered] && remembered !== MODEL_ID) {
+    // Skip a `comingSoon` remembered model (e.g. LFM2.5) — it isn't loadable and
+    // would leave the dock stuck trying to load it. Fall back to the default.
+    if (remembered && MODELS[remembered] && !MODELS[remembered].comingSoon && remembered !== MODEL_ID) {
       MODEL_ID = remembered
       renderModelIdentity()
       renderModelState()
@@ -998,20 +1000,28 @@ export function mountChatPanel(
       const resident = loadedModelIds.includes(cfg.id)
       const size = document.createElement('span')
       size.className = 'dls-model-menu-size'
-      // Resident models switch instantly; others show their download size.
-      size.textContent = resident ? 'loaded' : cfg.downloadSize
+      // Coming-soon models aren't loadable; resident models switch instantly;
+      // others show their download size.
+      size.textContent = cfg.comingSoon ? 'Coming soon' : resident ? 'loaded' : cfg.downloadSize
       if (resident) size.classList.add('dls-model-menu-loaded')
       item.append(check, name, size)
-      item.addEventListener('click', () => {
-        closeModelMenu()
-        if (cfg.id === MODEL_ID) return
-        MODEL_ID = cfg.id
-        void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
-        renderModelIdentity()
-        // loadModel() sends divinci:load, which the host treats as an INSTANT
-        // activate when the model is already resident, or a real load otherwise.
-        loadModel()
-      })
+      if (cfg.comingSoon) {
+        item.classList.add('is-disabled')
+        item.disabled = true
+        item.setAttribute('aria-disabled', 'true')
+        item.title = `${cfg.label} is coming soon`
+      } else {
+        item.addEventListener('click', () => {
+          closeModelMenu()
+          if (cfg.id === MODEL_ID) return
+          MODEL_ID = cfg.id
+          void chrome.storage.local.set({ [STORAGE_KEY_MODEL]: MODEL_ID })
+          renderModelIdentity()
+          // loadModel() sends divinci:load, which the host treats as an INSTANT
+          // activate when the model is already resident, or a real load otherwise.
+          loadModel()
+        })
+      }
       el.modelMenu.append(item)
     }
   }
@@ -1318,6 +1328,7 @@ export function mountChatPanel(
 
   // ---- Actions ------------------------------------------------------------
   function loadModel(): void {
+    if (MODELS[MODEL_ID]?.comingSoon) return // not loadable (blocked upstream)
     isLoading = true
     renderModelState()
     // Remember the chosen model so the SW's auto-warm reloads it (from the disk
@@ -3579,6 +3590,8 @@ export const SIDEBAR_CSS = /* css */ `
   }
   .dls-model-menu-item:hover { background: var(--dls-bg); }
   .dls-model-menu-item.is-active { background: var(--dls-accent); color: var(--dls-accent-text, #fff); }
+  .dls-model-menu-item.is-disabled { opacity: 0.45; cursor: default; }
+  .dls-model-menu-item.is-disabled:hover { background: transparent; }
   .dls-model-menu-check { width: 12px; flex: 0 0 auto; font-size: 11px; }
   .dls-model-menu-name { flex: 1 1 auto; white-space: nowrap; }
   .dls-model-menu-size { flex: 0 0 auto; font-size: 10.5px; opacity: 0.65; }
