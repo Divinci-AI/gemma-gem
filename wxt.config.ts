@@ -30,6 +30,17 @@ if (!ALLOWED_MODES.has(mode)) {
   throw new Error(`Invalid mode "${mode}". Allowed: ${[...ALLOWED_MODES].join(', ')}`)
 }
 
+// Never let a store-packaging run (`wxt zip`) produce a development build:
+// dev mode injects `http://localhost:8080` into externally_connectable and a
+// localhost host permission, so any local process binding that port in a
+// shipped `.crx` could chrome.runtime.connect and consume the user's GPU.
+if (mode === 'development' && process.argv.includes('zip')) {
+  throw new Error(
+    'Refusing to `zip` a development build (localhost would ship in externally_connectable). ' +
+      'Run `pnpm zip` in production mode.',
+  )
+}
+
 // Pinned public key for a stable extension ID across every machine that
 // loads this unpacked. Derives the deterministic ID
 // `laeebjagghfeepomjhbfohefghonemeo` so the web app's extension-capabilities
@@ -92,11 +103,30 @@ export default defineConfig({
         // robot.html = the 3D mascot iframe embedded in the panel empty state;
         // the PNG is its no-WebGL fallback. Because robot.html is framed FROM a
         // web page (not opened as a direct extension page like popup/panel), its
-        // own sub-resource scripts (the entry chunk + the lazily-imported
-        // three.js chunk under /chunks/) must ALSO be web-accessible or the
-        // browser blocks them and nothing in the iframe runs. The chunks are
-        // just JS (no secrets), so exposing them is safe.
-        resources: ['robot.html', 'divinci-robot.png', 'chunks/*.js'],
+        // own sub-resource scripts must ALSO be web-accessible or the browser
+        // blocks them and nothing in the iframe runs. Expose ONLY the robot's
+        // own transitive chunk set (entry + logo-robot/three + the vite/wxt
+        // infra chunks it imports) — NOT a blanket `chunks/*.js`, which would
+        // also expose the offscreen/models/release-config app-logic chunks to
+        // every origin and widen the fingerprinting surface. Hashes vary per
+        // build, so match by the stable chunk-name prefixes. IMPORTANT: if the
+        // robot iframe ever imports a new shared chunk (e.g. logger/models),
+        // add its prefix here or the iframe silently goes blank.
+        resources: [
+          'robot.html',
+          'divinci-robot.png',
+          'chunks/robot-*.js',
+          'chunks/logo-robot-*.js',
+          'chunks/preload-helper-*.js',
+          'chunks/_virtual_wxt-html-plugins-*.js',
+          // Page-context inference host iframe (framed from a web page → its
+          // transitive chunks + ORT wasm must be web-accessible). transformers.js
+          // + ort + models are large shared chunks; expose broadly for Phase 0.
+          // TODO Phase 1: tighten to exact chunk-name prefixes.
+          'inference.html',
+          'chunks/*.js',
+          'assets/*',
+        ],
         matches: ['<all_urls>'],
       },
     ],
@@ -118,8 +148,11 @@ export default defineConfig({
   vite: () => ({
     build: {
       target: 'esnext',
-      sourcemap: true,
-      minify: false,
+      // Ship neither source maps nor readable source in a production build:
+      // both leak the full application source into the store `.zip` and are a
+      // common review flag. Dev builds keep them for debuggability.
+      sourcemap: mode === 'development',
+      minify: mode === 'development' ? false : 'esbuild',
     },
   }),
 })

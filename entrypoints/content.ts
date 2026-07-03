@@ -52,5 +52,30 @@ export default defineContentScript({
     })
 
     ui.mount()
+
+    // --- Phase 0 de-risk: page-context inference host -----------------------
+    // Inject a hidden chrome-extension iframe that self-tests LFM2.5 load+generate
+    // in THIS page's context (where the MV3 offscreen document hangs). The robot
+    // iframe already proves WebGL works in such a frame; this checks WebGPU
+    // inference. Result is stamped on <html data-divinci-inference> + posted.
+    // Remove once Phase 1 wires the real routing.
+    try {
+      window.addEventListener('message', (e) => {
+        const d = e.data as { __divinciInference?: boolean } | null
+        if (d && d.__divinciInference) {
+          document.documentElement.setAttribute('data-divinci-inference', JSON.stringify(d))
+          // eslint-disable-next-line no-console
+          console.warn('[divinci-inference]', JSON.stringify(d))
+        }
+      })
+      const iframe = document.createElement('iframe')
+      iframe.src = chrome.runtime.getURL('inference.html')
+      iframe.setAttribute('aria-hidden', 'true')
+      iframe.style.cssText =
+        'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
+      document.documentElement.appendChild(iframe)
+    } catch {
+      /* extension context gone */
+    }
   },
 })
