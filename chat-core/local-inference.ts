@@ -98,7 +98,17 @@ export class LocalInference implements InferenceClient {
       })
 
       const onAbort = req.signal
-        ? () => this.transport.send({ type: 'divinci:abort', requestId })
+        ? () => {
+            // Best-effort: tell the host to interrupt generation.
+            this.transport.send({ type: 'divinci:abort', requestId })
+            // …but settle the turn NOW regardless. If the host's generate() is
+            // wedged (e.g. a synchronous WASM-fallback prefill on an arch with
+            // incomplete WebGPU kernels), it will never emit divinci:aborted, so
+            // waiting for it leaves the UI frozen on "Stop" with the input
+            // disabled. Resolving optimistically hands control back to the user
+            // immediately; the `settled` guard drops any late aborted/done/token.
+            finish(() => resolve({ text: streamed, aborted: true }))
+          }
         : null
       if (onAbort) {
         if (req.signal!.aborted) onAbort()

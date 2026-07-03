@@ -632,14 +632,37 @@ els.clearCacheBtn.addEventListener('click', async () => {
   if (!ok) return
   els.clearCacheBtn.disabled = true
   els.clearCacheBtn.textContent = 'Clearing…'
+
+  const usageNow = async (): Promise<number> => {
+    try {
+      const e = await navigator.storage?.estimate?.()
+      return e?.usage ?? 0
+    } catch {
+      return 0
+    }
+  }
+  const initial = await usageNow()
   void sendInternal({ type: 'internal:clear-cache' })
-  // Cache deletion runs in the offscreen; estimate updates over the
-  // next second or two as the entries are removed.
-  setTimeout(() => {
-    els.clearCacheBtn.disabled = false
-    els.clearCacheBtn.textContent = 'Clear'
-    void refreshStorageEstimate()
-  }, 1500)
+
+  // Deleting multi-GB model weights from the Cache API runs in the offscreen and
+  // can take MINUTES. Poll storage.estimate() so the displayed size drops LIVE
+  // and the button stays "Clearing…" until it's actually done — rather than
+  // reverting after a fixed delay while the number sits stale for minutes.
+  const start = Date.now()
+  const MAX_MS = 5 * 60 * 1000
+  const tick = async (): Promise<void> => {
+    await refreshStorageEstimate() // updates the displayed disk-cache number
+    const usage = await usageNow()
+    const cleared = usage < 5 * 1024 * 1024 || usage <= initial * 0.05
+    if (cleared || Date.now() - start > MAX_MS) {
+      els.clearCacheBtn.disabled = false
+      els.clearCacheBtn.textContent = 'Clear'
+      await refreshStorageEstimate()
+      return
+    }
+    setTimeout(() => void tick(), 2000)
+  }
+  setTimeout(() => void tick(), 2000)
 })
 
 // ---- Wake word (Phase B0: hands-free "Hey Jarvis") ---------------------
