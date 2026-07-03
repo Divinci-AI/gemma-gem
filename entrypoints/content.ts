@@ -54,7 +54,10 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   let statusSeq = 0
 
   const post = (msg: unknown): void => {
-    iframe.contentWindow?.postMessage(msg, '*')
+    const cw = iframe.contentWindow
+    const t = (msg as { req?: { type?: string } })?.req?.type ?? '?'
+    document.documentElement.setAttribute('data-divinci-post', `${t}:cw=${cw ? 'y' : 'n'}`)
+    cw?.postMessage(msg, '*')
   }
   const flush = (): void => {
     ready = true
@@ -72,10 +75,20 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
     } | null
     if (!d || !d.__divinciInference) return
     // Backend-side tracing (main-world capture is blind to this traffic).
-    const dbg = d as { ack?: string; event?: { type?: string } }
+    const dbg = d as { ack?: string; event?: { type?: string; message?: string } }
     if (dbg.ack) document.documentElement.setAttribute('data-divinci-last-ack', dbg.ack)
+    // Load-specific stamps that the status poll can't clobber.
+    if (dbg.ack === 'divinci:load')
+      document.documentElement.setAttribute('data-divinci-load-acked', 'yes')
     if (dbg.event?.type)
       document.documentElement.setAttribute('data-divinci-last-event', dbg.event.type)
+    if (dbg.event?.type && dbg.event.type.startsWith('divinci:load'))
+      document.documentElement.setAttribute('data-divinci-load-event', dbg.event.type)
+    if (dbg.event?.type === 'divinci:error')
+      document.documentElement.setAttribute(
+        'data-divinci-load-error',
+        (dbg.event.message ?? '').slice(0, 120),
+      )
     // First message of any kind proves the frame is up — flush the outbox.
     if (!ready) {
       document.documentElement.setAttribute('data-divinci-host-ready', 'yes')
