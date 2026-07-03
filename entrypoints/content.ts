@@ -28,6 +28,15 @@ import type { DivinciExternalEvent, InternalStatusResponse } from '@/shared/mess
 function createIframeBackend(): { backend: DockBackend; attach: (mountRoot?: ParentNode) => void } {
   const iframe = document.createElement('iframe')
   iframe.src = chrome.runtime.getURL('inference.html')
+  // CRITICAL: delegate WebGPU (+ mic for wake-word) to this iframe. It's a
+  // CROSS-ORIGIN (chrome-extension://) frame inside an http(s) page, and modern
+  // Chrome gates `webgpu` behind a Permissions Policy whose default allowlist is
+  // `self` — so without this the frame's navigator.gpu.requestAdapter() returns
+  // null ("Failed to get GPU adapter"), transformers.js silently falls back to a
+  // synchronous WASM kernel, and generation HANGS. A top-level page (e.g.
+  // webgpureport.org) gets WebGPU by default; an embedded cross-origin iframe
+  // does NOT unless the embedder delegates it here.
+  iframe.setAttribute('allow', 'webgpu; microphone')
   iframe.setAttribute('aria-hidden', 'true')
   iframe.style.cssText =
     'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
