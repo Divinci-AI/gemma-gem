@@ -36,21 +36,12 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   // DOM (verified live: appendChild ran, backend='ok', yet zero iframes existed).
   // Phase 0 appended after mount and worked; so we defer the insertion here.
   const attach = (): void => {
-    if (!iframe.isConnected) document.documentElement.appendChild(iframe)
-    // Map the document relationship: append a plain probe DIV + the iframe, then
-    // stamp what THIS (content-script) document sees. The main world compares.
-    const probe = document.createElement('div')
-    probe.id = 'dv-probe'
-    document.body.appendChild(probe)
-    const de = document.documentElement
-    de.setAttribute('data-divinci-iframe-now', String(iframe.isConnected))
-    de.setAttribute('data-divinci-probe-div', String(!!document.getElementById('dv-probe')))
-    de.setAttribute('data-divinci-body-kids', String(document.body.children.length))
-    de.setAttribute('data-divinci-is-top', String(window === window.top))
-    de.setAttribute('data-divinci-doc-url', String(document.location.href).slice(0, 60))
-    setTimeout(() => {
-      de.setAttribute('data-divinci-iframe-later', String(iframe.isConnected))
-    }, 1500)
+    // Append to <body>, NOT documentElement (<html>): an <iframe> parented to
+    // <html> reports isConnected=true but is fostered into a non-rendered,
+    // non-queryable state (it never loads its src). Verified live: a probe DIV
+    // in <body> was visible to the page while the same-run iframe under <html>
+    // was invisible + never ran. A sibling of the visible DIV works.
+    if (!iframe.isConnected) document.body.appendChild(iframe)
   }
 
   let ready = false
