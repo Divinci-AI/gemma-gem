@@ -650,14 +650,25 @@ els.clearCacheBtn.addEventListener('click', async () => {
   // reverting after a fixed delay while the number sits stale for minutes.
   const start = Date.now()
   const MAX_MS = 5 * 60 * 1000
+  const DELTA = 20 * 1024 * 1024 // 20 MB "still shrinking" threshold
+  let prev = initial
+  let started = false
+  const finishClearing = async (): Promise<void> => {
+    els.clearCacheBtn.disabled = false
+    els.clearCacheBtn.textContent = 'Clear'
+    await refreshStorageEstimate()
+  }
   const tick = async (): Promise<void> => {
-    await refreshStorageEstimate() // updates the displayed disk-cache number
+    await refreshStorageEstimate() // updates the displayed disk-cache number LIVE
     const usage = await usageNow()
-    const cleared = usage < 5 * 1024 * 1024 || usage <= initial * 0.05
-    if (cleared || Date.now() - start > MAX_MS) {
-      els.clearCacheBtn.disabled = false
-      els.clearCacheBtn.textContent = 'Clear'
-      await refreshStorageEstimate()
+    if (usage < initial - DELTA) started = true // the delete has visibly begun
+    // Done when it's basically empty OR it has plateaued (stopped shrinking) —
+    // some entries (e.g. a store the offscreen can't reach) may leave a floor,
+    // and we shouldn't spin "Clearing…" forever waiting to hit zero.
+    const plateaued = started && Math.abs(prev - usage) < DELTA
+    prev = usage
+    if (usage < 5 * 1024 * 1024 || plateaued || Date.now() - start > MAX_MS) {
+      await finishClearing()
       return
     }
     setTimeout(() => void tick(), 2000)
