@@ -25,17 +25,19 @@ import type { DivinciExternalEvent, InternalStatusResponse } from '@/shared/mess
  * `{ __divinciInference, event | statusResponse | ready }` back. Sends are
  * queued until the frame signals ready.
  */
-function createIframeBackend(): DockBackend {
+function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   const iframe = document.createElement('iframe')
   iframe.src = chrome.runtime.getURL('inference.html')
   iframe.setAttribute('aria-hidden', 'true')
   iframe.style.cssText =
     'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
-  // MUST append to <body>, not <html>: an <iframe> is not a valid direct child
-  // of documentElement, so the browser silently drops it (verified live — the
-  // element vanished though appendChild didn't throw). <body> exists at
-  // document_idle; fall back to documentElement only if it somehow doesn't.
-  ;(document.body ?? document.documentElement).appendChild(iframe)
+  // Attach LATE (after the shadow-root UI mounts). Appending the iframe early —
+  // before/around the async createShadowRootUi — got it silently dropped from the
+  // DOM (verified live: appendChild ran, backend='ok', yet zero iframes existed).
+  // Phase 0 appended after mount and worked; so we defer the insertion here.
+  const attach = (): void => {
+    if (!iframe.isConnected) (document.body ?? document.documentElement).appendChild(iframe)
+  }
 
   let ready = false
   const outbox: unknown[] = []
@@ -75,7 +77,7 @@ function createIframeBackend(): DockBackend {
     if (d.event) for (const h of subscribers) h(d.event)
   })
 
-  return {
+  const backend: DockBackend = {
     send(req) {
       const msg = { __divinciReq: true, req }
       if (ready) post(msg)
@@ -95,6 +97,7 @@ function createIframeBackend(): DockBackend {
       setTimeout(() => statusCbs.delete(statusId), 5000)
     },
   }
+  return { backend, attach }
 }
 
 export default defineContentScript({
@@ -108,8 +111,11 @@ export default defineContentScript({
     // Spin up the page-context inference backend once per page. Guarded so a
     // torn-down extension context (navigation mid-setup) doesn't throw.
     let backend: DockBackend | undefined
+    let attachBackend: (() => void) | undefined
     try {
-      backend = createIframeBackend()
+      const created = createIframeBackend()
+      backend = created.backend
+      attachBackend = created.attach
       // Visible diagnostic (isolated-world console.* doesn't surface to the page):
       // stamp on <html> so a driver can read whether the backend wired up.
       document.documentElement.setAttribute('data-divinci-backend', 'ok')
@@ -152,5 +158,11 @@ export default defineContentScript({
     })
 
     ui.mount()
+
+    // Insert the inference iframe now that the UI has mounted and the DOM has
+    // settled — appending it earlier got it silently dropped. The backend's
+    // send/queryStatus outbox queues until the frame loads + signals ready.
+    attachBackend?.()
+    document.documentElement.setAttribute('data-divinci-iframe', 'attached')
   },
 })
