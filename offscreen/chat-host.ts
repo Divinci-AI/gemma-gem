@@ -154,7 +154,26 @@ export class ChatHost {
     const config = MODELS[modelId]
     if (!config) throw new Error(`Unknown modelId: ${modelId}`)
 
-    // NOTE: does NOT dispose other resident models — multiple can coexist.
+    // Single-model-resident: dispose any OTHER resident models before loading a
+    // new one. Keeping several resident exhausts WebGPU VRAM — two ~3GB Gemma
+    // variants plus a third model overflowed the GPU and CRASHED the browser.
+    // (We're in _load only when the target isn't already resident, so every
+    // entry here is a DIFFERENT model.) Dispose them directly rather than via
+    // unloadAll(), which would flag our own loadingModelId as unloaded-during-
+    // load and make the fresh result get discarded below. Instant multi-model
+    // switching can return later behind a proper VRAM budget / LRU.
+    if (this.loaded.size > 0) {
+      log.info(`Disposing ${this.loaded.size} resident model(s) before loading ${modelId} (VRAM safety)`)
+      for (const [otherId, entry] of [...this.loaded]) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((entry.model as any)?.dispose) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          try { await (entry.model as any).dispose() } catch (e) { log.warn('dispose() threw', e) }
+        }
+        this.loaded.delete(otherId)
+      }
+      this.activeModelId = null
+    }
     log.info(`Loading ${modelId} (${config.hfModelId} @ ${config.revision} dtype=${config.dtype})`)
 
     let totalLoaded = 0

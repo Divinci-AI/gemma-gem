@@ -321,47 +321,42 @@ describe('ChatHost queue', () => {
   })
 })
 
-describe('ChatHost multi-model', () => {
-  it('loads multiple models simultaneously — both stay resident', async () => {
+// Single-model-resident: keeping several models in WebGPU VRAM crashed the GPU
+// process (two ~3GB Gemma variants + a third model). load() of a NEW model now
+// disposes the previously-resident one; at most one model is ever resident.
+describe('ChatHost single-model-resident (VRAM safety)', () => {
+  it('loading a second model disposes the first — only one stays resident', async () => {
     const host = new ChatHost()
     await host.load('gemma-4-e2b')
     await host.load('lfm2.5-230m')
-    expect(host.isLoaded('gemma-4-e2b')).toBe(true)
+    expect(host.isLoaded('gemma-4-e2b')).toBe(false) // disposed to free VRAM
     expect(host.isLoaded('lfm2.5-230m')).toBe(true)
-    expect(host.loadedModelIds().sort()).toEqual(['gemma-4-e2b', 'lfm2.5-230m'])
-    // The most recently loaded becomes the active chat target.
+    expect(host.loadedModelIds()).toEqual(['lfm2.5-230m'])
     expect(host.getActiveModelId()).toBe('lfm2.5-230m')
   })
 
-  it('setActive switches the chat target without unloading (instant)', async () => {
+  it('load() of the already-resident model is a no-op activate (no reload/dispose)', async () => {
     const host = new ChatHost()
     await host.load('gemma-4-e2b')
-    await host.load('lfm2.5-230m')
+    await host.load('gemma-4-e2b') // already resident → just activate
+    expect(host.getActiveModelId()).toBe('gemma-4-e2b')
+    expect(host.loadedModelIds()).toEqual(['gemma-4-e2b'])
+  })
+
+  it('setActive on the sole resident model works; non-resident is a no-op', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
     expect(host.setActive('gemma-4-e2b')).toBe(true)
     expect(host.getActiveModelId()).toBe('gemma-4-e2b')
-    // both still resident
-    expect(host.loadedModelIds().length).toBe(2)
-    // setActive on a non-resident model is a no-op
-    expect(host.setActive('gemma-4-e2b-qat')).toBe(false)
+    expect(host.setActive('lfm2.5-230m')).toBe(false) // not resident
   })
 
-  it('load() of an already-resident model just activates it (no reload)', async () => {
+  it('unload(modelId) frees the resident model; nothing active after', async () => {
     const host = new ChatHost()
     await host.load('gemma-4-e2b')
-    await host.load('lfm2.5-230m')
-    await host.load('gemma-4-e2b') // resident → activate
-    expect(host.getActiveModelId()).toBe('gemma-4-e2b')
-    expect(host.loadedModelIds().length).toBe(2)
-  })
-
-  it('unload(modelId) frees just that model; active falls back to a remaining one', async () => {
-    const host = new ChatHost()
-    await host.load('gemma-4-e2b')
-    await host.load('lfm2.5-230m') // active
-    await host.unload('lfm2.5-230m')
-    expect(host.isLoaded('lfm2.5-230m')).toBe(false)
-    expect(host.isLoaded('gemma-4-e2b')).toBe(true)
-    expect(host.getActiveModelId()).toBe('gemma-4-e2b') // fell back
+    await host.unload('gemma-4-e2b')
+    expect(host.isLoaded('gemma-4-e2b')).toBe(false)
+    expect(host.getActiveModelId()).toBeNull()
   })
 
   it('unloadAll clears everything', async () => {
