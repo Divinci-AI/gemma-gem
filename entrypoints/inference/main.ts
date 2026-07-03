@@ -172,6 +172,12 @@ window.addEventListener('message', (e: MessageEvent) => {
   const data = e.data as { __divinciReq?: boolean; req?: IncomingReq; statusId?: string } | null
   if (!data || !data.__divinciReq || !data.req) return
   const req = data.req
+  // Diagnostic ack: prove parent→iframe sends arrive.
+  try {
+    window.parent.postMessage({ __divinciInference: true, ack: req.type }, '*')
+  } catch {
+    /* parent gone */
+  }
   switch (req.type) {
     case 'divinci:load':
       void handleLoad(req)

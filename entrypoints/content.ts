@@ -36,10 +36,12 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   // DOM (verified live: appendChild ran, backend='ok', yet zero iframes existed).
   // Phase 0 appended after mount and worked; so we defer the insertion here.
   const attach = (): void => {
-    // Phase 0 appended to documentElement and the iframe RAN (posted results),
-    // even though querySelectorAll couldn't see it. Replicate that exactly and
-    // verify by whether the frame signals ready (stamped below), not by DOM query.
-    if (!iframe.isConnected) document.documentElement.appendChild(iframe)
+    // Append to <body>. Under documentElement (<html>) the iframe is FOSTERED:
+    // it runs + can post to parent (ready fires) but the browser relocates it,
+    // so our contentWindow handle goes stale and parent→iframe sends silently
+    // fail (verified: hostReady=yes yet Load requests got no response). A normal
+    // <body> child keeps a stable contentWindow so both directions work.
+    if (!iframe.isConnected) document.body.appendChild(iframe)
     iframe.addEventListener('load', () =>
       document.documentElement.setAttribute('data-divinci-iframe-loaded', 'yes'),
     )
