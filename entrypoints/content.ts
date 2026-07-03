@@ -31,7 +31,11 @@ function createIframeBackend(): DockBackend {
   iframe.setAttribute('aria-hidden', 'true')
   iframe.style.cssText =
     'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
-  document.documentElement.appendChild(iframe)
+  // MUST append to <body>, not <html>: an <iframe> is not a valid direct child
+  // of documentElement, so the browser silently drops it (verified live — the
+  // element vanished though appendChild didn't throw). <body> exists at
+  // document_idle; fall back to documentElement only if it somehow doesn't.
+  ;(document.body ?? document.documentElement).appendChild(iframe)
 
   let ready = false
   const outbox: unknown[] = []
