@@ -37,11 +37,19 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   // Phase 0 appended after mount and worked; so we defer the insertion here.
   const attach = (): void => {
     if (!iframe.isConnected) document.documentElement.appendChild(iframe)
-    // Diagnose append-then-removed vs never-appended: stamp connectivity now and
-    // again shortly after (if something strips the frame, the 2nd will be false).
-    document.documentElement.setAttribute('data-divinci-iframe-now', String(iframe.isConnected))
+    // Map the document relationship: append a plain probe DIV + the iframe, then
+    // stamp what THIS (content-script) document sees. The main world compares.
+    const probe = document.createElement('div')
+    probe.id = 'dv-probe'
+    document.body.appendChild(probe)
+    const de = document.documentElement
+    de.setAttribute('data-divinci-iframe-now', String(iframe.isConnected))
+    de.setAttribute('data-divinci-probe-div', String(!!document.getElementById('dv-probe')))
+    de.setAttribute('data-divinci-body-kids', String(document.body.children.length))
+    de.setAttribute('data-divinci-is-top', String(window === window.top))
+    de.setAttribute('data-divinci-doc-url', String(document.location.href).slice(0, 60))
     setTimeout(() => {
-      document.documentElement.setAttribute('data-divinci-iframe-later', String(iframe.isConnected))
+      de.setAttribute('data-divinci-iframe-later', String(iframe.isConnected))
     }, 1500)
   }
 
