@@ -36,12 +36,13 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   // DOM (verified live: appendChild ran, backend='ok', yet zero iframes existed).
   // Phase 0 appended after mount and worked; so we defer the insertion here.
   const attach = (): void => {
-    // Append to <body>, NOT documentElement (<html>): an <iframe> parented to
-    // <html> reports isConnected=true but is fostered into a non-rendered,
-    // non-queryable state (it never loads its src). Verified live: a probe DIV
-    // in <body> was visible to the page while the same-run iframe under <html>
-    // was invisible + never ran. A sibling of the visible DIV works.
-    if (!iframe.isConnected) document.body.appendChild(iframe)
+    // Phase 0 appended to documentElement and the iframe RAN (posted results),
+    // even though querySelectorAll couldn't see it. Replicate that exactly and
+    // verify by whether the frame signals ready (stamped below), not by DOM query.
+    if (!iframe.isConnected) document.documentElement.appendChild(iframe)
+    iframe.addEventListener('load', () =>
+      document.documentElement.setAttribute('data-divinci-iframe-loaded', 'yes'),
+    )
   }
 
   let ready = false
@@ -69,7 +70,10 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
     } | null
     if (!d || !d.__divinciInference) return
     // First message of any kind proves the frame is up — flush the outbox.
-    if (!ready) flush()
+    if (!ready) {
+      document.documentElement.setAttribute('data-divinci-host-ready', 'yes')
+      flush()
+    }
     if (d.ready) return
     if (d.statusResponse) {
       const cb = d.statusId ? statusCbs.get(d.statusId) : undefined
