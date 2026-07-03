@@ -3717,7 +3717,7 @@ export const SIDEBAR_CSS = /* css */ `
     background: var(--dls-accent);
     transition: width 0.2s ease;
   }
-  .dls-progress-text { margin: 6px 0 0; font-size: 11px; color: var(--dls-muted); }
+  .dls-progress-text { margin: 6px 0 0; font-size: 11px; color: var(--dls-muted); font-variant-numeric: tabular-nums; }
 
   .dls-messages {
     flex: 1;

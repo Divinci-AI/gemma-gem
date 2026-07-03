@@ -259,9 +259,29 @@ header h1 {
 .progress-label {
   display: flex;
   justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
   font-size: 11px;
   color: var(--c-muted);
   margin-bottom: 4px;
+}
+
+/* Long weight-file names (e.g. embed_tokens_q4.onnx_data) must truncate, not
+   reflow — otherwise the row jitters/overflows on every progress tick. */
+#progress-file {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the "% (MB / GB)" readout a stable width so changing digits don't shift
+   the layout: no wrap + tabular figures. */
+#progress-pct {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .progress-bar {
