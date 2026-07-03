@@ -151,7 +151,7 @@ export default defineContentScript({
     // Spin up the page-context inference backend once per page. Guarded so a
     // torn-down extension context (navigation mid-setup) doesn't throw.
     let backend: DockBackend | undefined
-    let attachBackend: (() => void) | undefined
+    let attachBackend: ((mountRoot?: ParentNode) => void) | undefined
     try {
       const created = createIframeBackend()
       backend = created.backend
