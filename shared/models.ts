@@ -9,7 +9,13 @@
  * in chat.divinci.app's AVAILABLE_MODELS picker.
  */
 
-export type ModelId = 'gemma-4-e2b' | 'gemma-4-e2b-qat' | 'lfm2.5-230m'
+export type ModelId =
+  | 'gemma-4-e2b'
+  | 'gemma-4-e2b-qat'
+  | 'lfm2.5-230m'
+  | 'llama-3.2-1b'
+  | 'qwen2.5-0.5b'
+  | 'smollm2-360m'
 
 export interface ModelConfig {
   id: ModelId
@@ -92,6 +98,46 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     dtype: 'q4',
     contextLimit: 32_768,
     chatTemplate: LFM2_CHATML_TEMPLATE,
+    version: 1,
+  },
+  // Kernel-complete small models (llama / qwen2 architectures) — these have
+  // COMPLETE transformers.js WebGPU kernels, so they stream cleanly in the
+  // page-context inference iframe on any real prompt. Validated end-to-end
+  // against a dock-style (system page-context + user) prompt: Qwen 40t/2.8s,
+  // SmolLM 27t/0.8s — the exact prompt shape that hangs lfm2's incomplete
+  // kernels. No chat-template override needed (their shipped templates parse
+  // fine in tjs 4.2.0 jinja).
+  'llama-3.2-1b': {
+    id: 'llama-3.2-1b',
+    hfModelId: 'onnx-community/Llama-3.2-1B-Instruct',
+    revision: '14007543b6dc92de88daf96a9aa85d2f95ace6ef',
+    label: 'Llama 3.2 1B',
+    shortLabel: 'Llama 3.2',
+    downloadSize: '~0.9 GB',
+    dtype: 'q4',
+    contextLimit: 131_072,
+    version: 1,
+  },
+  'qwen2.5-0.5b': {
+    id: 'qwen2.5-0.5b',
+    hfModelId: 'onnx-community/Qwen2.5-0.5B-Instruct',
+    revision: 'cc5cc01a65cc3ff17bdb73a7de33d879f62599b0',
+    label: 'Qwen2.5 0.5B',
+    shortLabel: 'Qwen2.5',
+    downloadSize: '~0.5 GB',
+    dtype: 'q4',
+    contextLimit: 32_768,
+    version: 1,
+  },
+  'smollm2-360m': {
+    id: 'smollm2-360m',
+    hfModelId: 'HuggingFaceTB/SmolLM2-360M-Instruct',
+    revision: 'a10cc1512eabd3dde888204e902eca88bddb4951',
+    label: 'SmolLM2 360M',
+    shortLabel: 'SmolLM2',
+    downloadSize: '~0.3 GB',
+    dtype: 'q4',
+    contextLimit: 8_192,
     version: 1,
   },
 }
