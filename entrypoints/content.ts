@@ -25,7 +25,7 @@ import type { DivinciExternalEvent, InternalStatusResponse } from '@/shared/mess
  * `{ __divinciInference, event | statusResponse | ready }` back. Sends are
  * queued until the frame signals ready.
  */
-function createIframeBackend(): { backend: DockBackend; attach: () => void } {
+function createIframeBackend(): { backend: DockBackend; attach: (mountRoot?: ParentNode) => void } {
   const iframe = document.createElement('iframe')
   iframe.src = chrome.runtime.getURL('inference.html')
   iframe.setAttribute('aria-hidden', 'true')
@@ -35,16 +35,23 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
   // before/around the async createShadowRootUi — got it silently dropped from the
   // DOM (verified live: appendChild ran, backend='ok', yet zero iframes existed).
   // Phase 0 appended after mount and worked; so we defer the insertion here.
-  const attach = (): void => {
-    // Append to <body>. Under documentElement (<html>) the iframe is FOSTERED:
-    // it runs + can post to parent (ready fires) but the browser relocates it,
-    // so our contentWindow handle goes stale and parent→iframe sends silently
-    // fail (verified: hostReady=yes yet Load requests got no response). A normal
-    // <body> child keeps a stable contentWindow so both directions work.
-    if (!iframe.isConnected) document.body.appendChild(iframe)
+  const attach = (mountRoot?: ParentNode): void => {
+    // Append inside the persistent WXT shadow root when available. Appending to
+    // document.body got the iframe DETACHED after it loaded (contentWindow → null,
+    // so all later posts silently no-op) — reproduced on multiple sites, so it's
+    // our own/WXT lifecycle, not page interference. The shadow root is the
+    // extension-managed UI the page + panel re-renders never touch.
+    const parent = mountRoot ?? document.body
+    if (!iframe.isConnected) parent.appendChild(iframe)
     iframe.addEventListener('load', () =>
       document.documentElement.setAttribute('data-divinci-iframe-loaded', 'yes'),
     )
+    // Self-heal: if the iframe is ever detached, re-append it so contentWindow
+    // stays live (a reload re-runs the host; the model reloads from cache).
+    const reattach = new MutationObserver(() => {
+      if (!iframe.isConnected) parent.appendChild(iframe)
+    })
+    if (parent instanceof Node) reattach.observe(parent, { childList: true })
   }
 
   let ready = false
@@ -192,10 +199,16 @@ export default defineContentScript({
 
     ui.mount()
 
-    // Insert the inference iframe now that the UI has mounted and the DOM has
-    // settled — appending it earlier got it silently dropped. The backend's
+    // Insert the inference iframe into the persistent shadow root (survives page
+    // + panel re-renders; a body child was getting detached). The backend's
     // send/queryStatus outbox queues until the frame loads + signals ready.
-    attachBackend?.()
-    document.documentElement.setAttribute('data-divinci-iframe', 'attached')
+    const mountRoot =
+      (ui as unknown as { shadow?: ParentNode; shadowHost?: { shadowRoot?: ParentNode } }).shadow ??
+      (ui as unknown as { shadowHost?: { shadowRoot?: ParentNode } }).shadowHost?.shadowRoot
+    attachBackend?.(mountRoot)
+    document.documentElement.setAttribute(
+      'data-divinci-iframe',
+      mountRoot ? 'attached:shadow' : 'attached:body',
+    )
   },
 })
