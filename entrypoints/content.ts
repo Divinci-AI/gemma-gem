@@ -142,6 +142,18 @@ function createIframeBackend(): { backend: DockBackend; attach: (mountRoot?: Par
 
 export default defineContentScript({
   matches: ['<all_urls>'],
+  // Do NOT inject on Divinci's own web apps. Reasons: (1) they already have cloud
+  // AI, so the local dock is redundant there; (2) the injected chrome-extension://
+  // inference iframe breaks other browser tooling/automation on those pages
+  // ("Cannot access a chrome-extension:// URL of different extension"). Covers the
+  // chat client + all *.divinci.app subdomains across dev/stage/prod, plus the
+  // *.divinci.ai marketing/docs surfaces.
+  excludeMatches: [
+    '*://*.divinci.app/*',
+    '*://divinci.app/*',
+    '*://*.divinci.ai/*',
+    '*://divinci.ai/*',
+  ],
   runAt: 'document_idle',
   // Avoid running inside our own extension pages or obvious non-content frames.
   // The launcher only makes sense on real web pages.
