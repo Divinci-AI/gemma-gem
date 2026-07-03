@@ -45,67 +45,17 @@ import type {
 } from '@/shared/messages'
 
 async function autoWarmIfRemembered(): Promise<void> {
+  // DISABLED: auto-warm loaded the remembered model into the OFFSCREEN document,
+  // whose WebGPU is broken in current Chrome (loads/generates hang). On-device
+  // inference now lives in the per-page content-script IFRAME (see
+  // entrypoints/inference), so warming the offscreen only wedges it and — worse
+  // — contends for the GPU with the iframe's load (seen as a stuck "Loading…"
+  // that disables the dock). The dock loads on demand via the iframe; there's
+  // nothing to pre-warm here. Clear any stale loading mirror and return.
   try {
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEY_MODEL,
-      STORAGE_KEY_WARM_STATE,
-      STORAGE_KEY_WARM_PENDING_AT,
-    ])
-    const modelId = stored[STORAGE_KEY_MODEL] as ModelId | undefined
-
-    // Never auto-warm a coming-soon model (e.g. LFM2.5) — it isn't loadable and
-    // its generation hangs the runtime; auto-warming it would wedge the offscreen.
-    if (modelId && MODELS[modelId]?.comingSoon) {
-      log.info('Auto-warm skipped: remembered model is coming-soon')
-      // Clear the remembered + loading state off the coming-soon model so no
-      // surface shows it stuck "Loading…" (recovers a wedged prior session) and
-      // nothing auto-loads. The dock falls back to its default; the user picks.
-      await chrome.storage.local.remove([STORAGE_KEY_MODEL, STORAGE_KEY_LOADING])
-      return
-    }
-
-    // Crash-loop guard (see STORAGE_KEY_WARM_STATE / decideAutoWarm). The SW
-    // re-runs this on every startup, including the ~30s eviction cycle — so a
-    // WebGPU/ONNX load that hard-crashes the renderer/SW would otherwise loop
-    // forever, surfacing the browser's "extension has crashed" balloon over and
-    // over. The timestamp lets us tell a real crash (stale 'pending') from a
-    // load still in flight after a normal eviction (recent 'pending').
-    const decision = decideAutoWarm({
-      modelId,
-      warmState: stored[STORAGE_KEY_WARM_STATE] as WarmState | undefined,
-      pendingAt: stored[STORAGE_KEY_WARM_PENDING_AT] as number | undefined,
-      now: Date.now(),
-    })
-
-    if (decision.action === 'skip') {
-      log.info(`Auto-warm skipped: ${decision.reason}`)
-      return
-    }
-    if (decision.action === 'disable') {
-      log.warn(`Auto-warm disabled: ${decision.reason}. Open the popup and click Load to retry.`)
-      await chrome.storage.local.set({ [STORAGE_KEY_WARM_STATE]: 'disabled' satisfies WarmState })
-      return
-    }
-
-    // decision.action === 'warm'
-    log.info(`Auto-warming remembered model: ${modelId}`)
-    // Mark 'pending' + stamp the time BEFORE dispatching, so a crash mid-load is
-    // visible to the next startup as a stale incomplete attempt.
-    await chrome.storage.local.set({
-      [STORAGE_KEY_WARM_STATE]: 'pending' satisfies WarmState,
-      [STORAGE_KEY_WARM_PENDING_AT]: Date.now(),
-    })
-    const req: InternalLoadRequest = {
-      type: 'internal:load',
-      requestId: `autowarm-${Date.now()}`,
-      modelId: modelId!,
-      caller: 'autowarm',
-    }
-    chrome.runtime.sendMessage(req as Message).catch((e) => {
-      log.warn('Auto-warm sendMessage failed (cache hit will make it fast on next manual load):', e)
-    })
+    await chrome.storage.local.remove(STORAGE_KEY_LOADING)
   } catch (e) {
-    log.warn('Auto-warm read from chrome.storage failed:', e)
+    log.debug('auto-warm cleanup failed:', e)
   }
 }
 
