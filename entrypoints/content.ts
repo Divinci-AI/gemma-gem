@@ -106,8 +106,15 @@ export default defineContentScript({
     let backend: DockBackend | undefined
     try {
       backend = createIframeBackend()
-    } catch {
+      // Visible diagnostic (isolated-world console.* doesn't surface to the page):
+      // stamp on <html> so a driver can read whether the backend wired up.
+      document.documentElement.setAttribute('data-divinci-backend', 'ok')
+    } catch (e) {
       backend = undefined
+      document.documentElement.setAttribute(
+        'data-divinci-backend',
+        'error: ' + String((e as Error)?.message ?? e).slice(0, 200),
+      )
     }
 
     const ui = await createShadowRootUi(ctx, {
