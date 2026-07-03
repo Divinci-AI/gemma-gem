@@ -124,8 +124,27 @@ export interface MountedSidebar {
  * The transport (chrome.runtime.connect) works in both contexts, so it's not
  * abstracted here.
  */
+/**
+ * Alternate inference backend for the dock. When provided (overlay surface), the
+ * panel routes load/chat/abort/status through this instead of the
+ * chrome.runtime port → SW → offscreen path. The content script backs it with
+ * the page-context inference iframe (the offscreen document can't run WebGPU in
+ * the current Chrome; a framed extension page can). Same `divinci:*` protocol,
+ * different transport.
+ */
+export interface DockBackend {
+  send(req: DivinciExternalRequest): void
+  subscribe(handler: (event: DivinciExternalEvent) => void): () => void
+  queryStatus(cb: (resp: InternalStatusResponse) => void): void
+}
+
 export interface ChatPanelDeps {
   mode: 'overlay' | 'panel'
+  /**
+   * Page-context inference backend (overlay only). When present, all local
+   * model traffic goes here instead of the SW/offscreen port.
+   */
+  backend?: DockBackend
   /**
    * Which of the three surfaces this mount currently is, for the hamburger
    * toggle-row highlight. Overlay → 'overlay'; panel page → 'dock' (side panel)
@@ -828,6 +847,12 @@ export function mountChatPanel(
   }
 
   function send(req: DivinciExternalRequest): void {
+    // Page-context backend (overlay): route local traffic to the inference
+    // iframe instead of the SW/offscreen port.
+    if (deps.backend) {
+      deps.backend.send(req)
+      return
+    }
     try {
       ensurePort().postMessage(req)
     } catch {
@@ -841,8 +866,22 @@ export function mountChatPanel(
     }
   }
 
+  // When a page-context backend is provided, subscribe once so its events fan
+  // out to chat-core (LocalInference) + the inline load/model-state handler,
+  // exactly like the port's onMessage listener does.
+  if (deps.backend) {
+    deps.backend.subscribe((msg) => {
+      for (const h of transportSubscribers) h(msg)
+      onPortEvent(msg)
+    })
+  }
+
   // ---- Status (one-shot, like the popup) ----------------------------------
   function queryStatus(): void {
+    if (deps.backend) {
+      deps.backend.queryStatus(applyStatus)
+      return
+    }
     try {
       chrome.runtime.sendMessage(
         { type: 'internal:status' },

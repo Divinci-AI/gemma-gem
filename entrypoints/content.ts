@@ -4,15 +4,94 @@
  *
  * All UI + chat logic lives in @/ui/chat-panel (mountChatPanel), shared with the
  * standalone panel page (browser side-panel dock + pop-out window). This wrapper
- * only supplies the content-script CONTEXT:
- *   - the shadow-root mount target (createShadowRootUi), and
- *   - host-page access (readPageText / pageHref / pageTitle) for grounding.
- * The transport (chrome.runtime.connect → SW) works identically in both
- * contexts, so it isn't abstracted.
+ * supplies the content-script CONTEXT:
+ *   - the shadow-root mount target (createShadowRootUi),
+ *   - host-page access (readPageText / pageHref / pageTitle) for grounding, and
+ *   - the PAGE-CONTEXT INFERENCE BACKEND: a hidden chrome-extension iframe that
+ *     runs on-device models with working WebGPU. The MV3 offscreen document
+ *     can't run WebGPU inference in the current Chrome (loads/generates hang on
+ *     a WASM-CPU fallback); a framed extension page CAN (the robot iframe proves
+ *     WebGL works there, and LFM2.5 generates in ~200ms). So the overlay routes
+ *     local traffic through this iframe instead of the SW/offscreen port.
  */
 
 import { createShadowRootUi } from 'wxt/utils/content-script-ui/shadow-root'
-import { mountChatPanel, SIDEBAR_CSS } from '@/ui/chat-panel'
+import { mountChatPanel, SIDEBAR_CSS, type DockBackend } from '@/ui/chat-panel'
+import type { DivinciExternalEvent, InternalStatusResponse } from '@/shared/messages'
+
+/**
+ * Create the page-context inference iframe and a DockBackend over it. The
+ * content script posts `{ __divinciReq, req }` to the frame and receives
+ * `{ __divinciInference, event | statusResponse | ready }` back. Sends are
+ * queued until the frame signals ready.
+ */
+function createIframeBackend(): DockBackend {
+  const iframe = document.createElement('iframe')
+  iframe.src = chrome.runtime.getURL('inference.html')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.style.cssText =
+    'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
+  document.documentElement.appendChild(iframe)
+
+  let ready = false
+  const outbox: unknown[] = []
+  const subscribers = new Set<(ev: DivinciExternalEvent) => void>()
+  const statusCbs = new Map<string, (r: InternalStatusResponse) => void>()
+  let statusSeq = 0
+
+  const post = (msg: unknown): void => {
+    iframe.contentWindow?.postMessage(msg, '*')
+  }
+  const flush = (): void => {
+    ready = true
+    while (outbox.length) post(outbox.shift())
+  }
+
+  window.addEventListener('message', (e: MessageEvent) => {
+    if (e.source !== iframe.contentWindow) return
+    const d = e.data as {
+      __divinciInference?: boolean
+      ready?: boolean
+      event?: DivinciExternalEvent
+      statusResponse?: InternalStatusResponse
+      statusId?: string
+    } | null
+    if (!d || !d.__divinciInference) return
+    // First message of any kind proves the frame is up — flush the outbox.
+    if (!ready) flush()
+    if (d.ready) return
+    if (d.statusResponse) {
+      const cb = d.statusId ? statusCbs.get(d.statusId) : undefined
+      if (cb && d.statusId) {
+        statusCbs.delete(d.statusId)
+        cb(d.statusResponse)
+      }
+      return
+    }
+    if (d.event) for (const h of subscribers) h(d.event)
+  })
+
+  return {
+    send(req) {
+      const msg = { __divinciReq: true, req }
+      if (ready) post(msg)
+      else outbox.push(msg)
+    },
+    subscribe(handler) {
+      subscribers.add(handler)
+      return () => subscribers.delete(handler)
+    },
+    queryStatus(cb) {
+      const statusId = `s${++statusSeq}`
+      statusCbs.set(statusId, cb)
+      const msg = { __divinciReq: true, req: { type: 'internal:status' }, statusId }
+      if (ready) post(msg)
+      else outbox.push(msg)
+      // Bound the callback map if the frame never answers.
+      setTimeout(() => statusCbs.delete(statusId), 5000)
+    },
+  }
+}
 
 export default defineContentScript({
   matches: ['<all_urls>'],
@@ -22,6 +101,15 @@ export default defineContentScript({
   allFrames: false,
 
   async main(ctx) {
+    // Spin up the page-context inference backend once per page. Guarded so a
+    // torn-down extension context (navigation mid-setup) doesn't throw.
+    let backend: DockBackend | undefined
+    try {
+      backend = createIframeBackend()
+    } catch {
+      backend = undefined
+    }
+
     const ui = await createShadowRootUi(ctx, {
       name: 'divinci-local-sidebar',
       position: 'inline',
@@ -37,6 +125,7 @@ export default defineContentScript({
           mode: 'overlay',
           surface: 'overlay',
           onInvalidated: ctx.onInvalidated,
+          backend,
           host: {
             // Raw visible text of the page (the panel normalizes + caps it).
             readPageText: () =>
@@ -52,30 +141,5 @@ export default defineContentScript({
     })
 
     ui.mount()
-
-    // --- Phase 0 de-risk: page-context inference host -----------------------
-    // Inject a hidden chrome-extension iframe that self-tests LFM2.5 load+generate
-    // in THIS page's context (where the MV3 offscreen document hangs). The robot
-    // iframe already proves WebGL works in such a frame; this checks WebGPU
-    // inference. Result is stamped on <html data-divinci-inference> + posted.
-    // Remove once Phase 1 wires the real routing.
-    try {
-      window.addEventListener('message', (e) => {
-        const d = e.data as { __divinciInference?: boolean } | null
-        if (d && d.__divinciInference) {
-          document.documentElement.setAttribute('data-divinci-inference', JSON.stringify(d))
-          // eslint-disable-next-line no-console
-          console.warn('[divinci-inference]', JSON.stringify(d))
-        }
-      })
-      const iframe = document.createElement('iframe')
-      iframe.src = chrome.runtime.getURL('inference.html')
-      iframe.setAttribute('aria-hidden', 'true')
-      iframe.style.cssText =
-        'position:fixed;width:1px;height:1px;border:0;left:-9999px;top:-9999px;opacity:0;pointer-events:none'
-      document.documentElement.appendChild(iframe)
-    } catch {
-      /* extension context gone */
-    }
   },
 })

@@ -2,7 +2,7 @@
   "name": "divinci-local-inference",
   "description": "In-browser Gemma 4 inference for chat.divinci.app, via WebGPU + an offscreen document. Bridges chrome.runtime ports to a single shared model instance.",
   "license": "Apache-2.0",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "type": "module",
   "scripts": {
     "dev": "wxt",
