@@ -71,6 +71,11 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
       statusId?: string
     } | null
     if (!d || !d.__divinciInference) return
+    // Backend-side tracing (main-world capture is blind to this traffic).
+    const dbg = d as { ack?: string; event?: { type?: string } }
+    if (dbg.ack) document.documentElement.setAttribute('data-divinci-last-ack', dbg.ack)
+    if (dbg.event?.type)
+      document.documentElement.setAttribute('data-divinci-last-event', dbg.event.type)
     // First message of any kind proves the frame is up — flush the outbox.
     if (!ready) {
       document.documentElement.setAttribute('data-divinci-host-ready', 'yes')
@@ -90,6 +95,10 @@ function createIframeBackend(): { backend: DockBackend; attach: () => void } {
 
   const backend: DockBackend = {
     send(req) {
+      document.documentElement.setAttribute(
+        'data-divinci-last-send',
+        (req as { type?: string }).type + (ready ? ':now' : ':queued'),
+      )
       const msg = { __divinciReq: true, req }
       if (ready) post(msg)
       else outbox.push(msg)
