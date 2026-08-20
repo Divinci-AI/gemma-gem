@@ -15,6 +15,13 @@
  *  5. The bridge rejects connections from a disallowed origin (defense-
  *     in-depth check on top of the Chromium-enforced allowlist).
  *
+ * ⚠️ The ping test binds TEST_PAGE_PORT (8080) for its probe page, which is the
+ * SAME port the Divinci local dev stack serves on (docker/local.yml). With that
+ * stack up, the probe page is never what loads — the real web app is — and the
+ * test fails with `expect(window.__probeResult).toBeTruthy()` receiving
+ * undefined, which reads as a broken externally_connectable rather than a port
+ * collision. Check `lsof -nP -iTCP:8080 -sTCP:LISTEN` before believing it.
+ *
  * What it does NOT verify (out of scope for smoke):
  *  - Model download + load (covered by extension-inference.spec.ts; gated
  *    behind RUN_REAL_INFERENCE=1).
