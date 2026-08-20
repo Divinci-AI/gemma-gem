@@ -17,11 +17,37 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { PRODUCTION, STAGING, PROD_AUTH0_CLIENT_ID_UNSET } from './divinci-account'
+import { PROD_AUTH0_CLIENT_ID_UNSET } from './divinci-account'
 import { ALLOWED_WEB_APP_ORIGINS } from './models'
 import { WEB_ACCESSIBLE_RESOURCES, isMatched } from '../build/web-accessible'
 
 const config = readFileSync(resolve(__dirname, '../wxt.config.ts'), 'utf-8')
+const accountSrc = readFileSync(resolve(__dirname, 'divinci-account.ts'), 'utf-8')
+
+/** Pull a string field out of one of the environment literals, by source text. */
+function envField(objectName: 'PRODUCTION' | 'STAGING', field: string): string {
+  const start = accountSrc.indexOf(`const ${objectName}: DivinciEnvironment = {`)
+  if (start === -1) throw new Error(`no ${objectName} literal in divinci-account.ts`)
+  const body = accountSrc.slice(start, accountSrc.indexOf('}', start))
+  const m = new RegExp(`${field}:\\s*'([^']*)'`).exec(body)
+  if (!m) {
+    const ref = new RegExp(`${field}:\\s*([A-Za-z_$][A-Za-z0-9_$]*)`).exec(body)
+    if (ref) return ref[1]
+    throw new Error(`no ${field} in ${objectName}`)
+  }
+  return m[1]
+}
+const PRODUCTION = {
+  authDomain: envField('PRODUCTION', 'authDomain'),
+  authClientId: envField('PRODUCTION', 'authClientId'),
+  authAudience: envField('PRODUCTION', 'authAudience'),
+  apiBase: envField('PRODUCTION', 'apiBase'),
+  embedBase: envField('PRODUCTION', 'embedBase'),
+}
+const STAGING = {
+  authDomain: envField('STAGING', 'authDomain'),
+  authClientId: envField('STAGING', 'authClientId'),
+}
 /**
  * Comments in this file legitimately NAME the hosts they exclude ("localhost
  * stays dev-only"), so a bare substring assertion over the raw source matches

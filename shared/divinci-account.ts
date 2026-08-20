@@ -26,31 +26,24 @@
  * orchestration that uses it lives in background/divinci-auth.ts (service worker).
  */
 
-/**
- * True during `pnpm dev` / `pnpm build` (development mode), false during
- * `pnpm build:prod`. Mirrors `isDevBuild` in shared/models.ts verbatim.
- */
-const isDevBuild =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
+import { PROD_AUTH0_CLIENT_ID, PROD_AUTH0_CLIENT_ID_UNSET } from './auth-config'
+
+export { PROD_AUTH0_CLIENT_ID_UNSET }
 
 /**
- * Sentinel for the production Auth0 client id. The production tenant
- * (`divinci-prod.us.auth0.com`) needs its OWN SPA application for this
- * extension — an Auth0 application is per-tenant, so the staging client id is
- * meaningless there and would fail `unauthorized_client` at /authorize.
+ * True during `pnpm dev` / `pnpm build` (development mode), false during
+ * `pnpm build:prod`.
  *
- * It is a sentinel rather than an empty string on purpose: `wxt.config.ts`
- * imports `DIVINCI_AUTH` and REFUSES to `zip` a production build while this
- * value is still in place. An empty string would have produced a store package
- * whose sign-in silently 400s.
- *
- * To fill it: Auth0 dashboard → divinci-prod tenant → Applications → Create →
- * Single Page Application (PKCE, no secret) → add
- * `https://<extension-id>.chromiumapp.org/` to Allowed Callback URLs → paste
- * the Client ID here. See STORE_LISTING.md "Production Auth0 application".
+ * ⚠️ Written as the BARE `import.meta.env.DEV` on purpose. Vite/WXT replaces
+ * that exact text with a literal, which lets esbuild fold the ternary below and
+ * DROP the unused branch. The defensive
+ * `typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV` form is
+ * not statically replaceable, so both branches survived into the bundle and the
+ * store package shipped `api.stage.divinci.app`, `chat.stage.divinci.app` and
+ * the staging Auth0 domain inside background.js.
  */
-export const PROD_AUTH0_CLIENT_ID_UNSET = '__SET_PROD_AUTH0_CLIENT_ID__'
+const isDevBuild = import.meta.env.DEV === true
+
 
 export interface DivinciEnvironment {
   /** Auth0 tenant domain. */
@@ -68,15 +61,21 @@ export interface DivinciEnvironment {
   readonly embedBase: string
 }
 
-export const PRODUCTION: DivinciEnvironment = {
+// NOT exported. Exporting these for a test kept the STAGING literal alive
+// through tree-shaking, so `api.stage.divinci.app` and the staging Auth0 domain
+// shipped inside background.js in the store package — internal hostnames in a
+// public artifact, contradicting the permission justification that names
+// production as the only hosts. The lockstep test reads this file as TEXT
+// instead, the same way it already reads wxt.config.ts.
+const PRODUCTION: DivinciEnvironment = {
   authDomain: 'divinci-prod.us.auth0.com',
-  authClientId: PROD_AUTH0_CLIENT_ID_UNSET,
+  authClientId: PROD_AUTH0_CLIENT_ID,
   authAudience: 'chat.divinci.app:8080',
   apiBase: 'https://api.divinci.app',
   embedBase: 'https://embed.divinci.app',
 }
 
-export const STAGING: DivinciEnvironment = {
+const STAGING: DivinciEnvironment = {
   authDomain: 'divinci-staging.us.auth0.com',
   authClientId: '6sk4DHy694PMCpToUkIYODnkvffyzfGY',
   authAudience: 'chat.stage.divinci.app:8080',

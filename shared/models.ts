@@ -320,9 +320,9 @@ export const DEFAULT_SETTINGS: UserSettings = {
  * `import.meta.env.DEV` is set by Vite/WXT during `pnpm dev`/`pnpm build`
  * (development mode) and false during `pnpm build:prod`.
  */
-const isDevBuild =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
+// Bare `import.meta.env.DEV` so Vite can replace it with a literal and esbuild
+// can drop the dead branch — see the note in shared/divinci-account.ts.
+const isDevBuild = import.meta.env.DEV === true
 
 export const ALLOWED_WEB_APP_ORIGINS = isDevBuild
   ? [

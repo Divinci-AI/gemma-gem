@@ -2,12 +2,13 @@ import { defineConfig } from 'wxt'
 import { cpSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
-import { DIVINCI_AUTH, PROD_AUTH0_CLIENT_ID_UNSET } from './shared/divinci-account'
-import { existsSync, readFileSync } from 'node:fs'
+import { PROD_AUTH0_CLIENT_ID, PROD_AUTH0_CLIENT_ID_UNSET } from './shared/auth-config'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
   WEB_ACCESSIBLE_RESOURCES,
   unmatchedWebAccessibleChunks,
 } from './build/web-accessible'
+import { findStagingLeaks } from './build/no-staging-leak'
 
 function copyOrtFiles() {
   const require = createRequire(import.meta.url)
@@ -67,13 +68,13 @@ if (mode === 'development' && process.argv.includes('zip')) {
 const isBootstrapDraft = process.env.DIVINCI_BOOTSTRAP_DRAFT === '1'
 
 if (mode !== 'development' && process.argv.includes('zip')) {
-  if (DIVINCI_AUTH.clientId === PROD_AUTH0_CLIENT_ID_UNSET && isBootstrapDraft) {
+  if (PROD_AUTH0_CLIENT_ID === PROD_AUTH0_CLIENT_ID_UNSET && isBootstrapDraft) {
     console.warn(
       '\n⚠️  DIVINCI_BOOTSTRAP_DRAFT=1 — building a package whose SIGN-IN CANNOT WORK.\n' +
         '    Upload it as a DRAFT to mint the extension id, then configure Auth0 and\n' +
         '    rebuild WITHOUT this variable. Do NOT submit this package for review.\n',
     )
-  } else if (DIVINCI_AUTH.clientId === PROD_AUTH0_CLIENT_ID_UNSET) {
+  } else if (PROD_AUTH0_CLIENT_ID === PROD_AUTH0_CLIENT_ID_UNSET) {
     throw new Error(
       'Refusing to `zip` a production build: the production Auth0 client id is unset.\n' +
         'Create the SPA application in the divinci-prod tenant, register\n' +
@@ -214,6 +215,25 @@ export default defineConfig({
             missing.map((m) => `  - ${m}`).join('\n') +
             '\nAdd a matching pattern in build/web-accessible.ts.',
         )
+      }
+
+      // A production bundle must not carry staging/dev hostnames. The manifest
+      // being clean is not enough — the leak that shipped was inside
+      // background.js, invisible to every other check.
+      if (mode !== 'development') {
+        const leaks = findStagingLeaks(
+          wxt.config.outDir,
+          { readdirSync, readFileSync },
+          (...parts: string[]) => parts.join('/'),
+        )
+        if (leaks.length > 0) {
+          throw new Error(
+            'Production build leaks non-production hostnames:\n' +
+              leaks.map((l) => `  - ${l.file}: ${l.needle}`).join('\n') +
+              '\nA dead branch survived tree-shaking — check that the guard on ' +
+              'it uses the bare `import.meta.env.DEV`, which Vite can replace.',
+          )
+        }
       }
     },
   },

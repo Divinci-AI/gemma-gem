@@ -219,6 +219,23 @@ development.)
 
 ---
 
+## Verified publisher (the "Official URL" under the item title)
+
+Independent of trader verification: no fee, no DUNS. The listing's *Official URL*
+dropdown offers only sites verified as yours in **Google Search Console**.
+
+`divinci.ai` **already carries two `google-site-verification` TXT records**
+(checked 2026-08-20 via `dig +short TXT divinci.ai`), so the domain is verified
+by at least one Google account already. If the account that owns the CWS
+publisher is one of them, this step is just picking `https://divinci.ai` from
+the dropdown — no DNS change.
+
+If it is NOT one of them, add a third TXT record from that account's Search
+Console flow; the existing two are unaffected (verification records accumulate,
+one per verifying account).
+
+---
+
 ## Pre-submission checklist
 
 - [x] Privacy policy URL live: https://divinci.ai/local-inference-privacy/

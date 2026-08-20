@@ -24,6 +24,7 @@
  * shard immediately afterwards.
  */
 import { chromium } from '@playwright/test'
+import { execSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -41,6 +42,35 @@ mkdirSync(PROFILE, { recursive: true })
 
 const WIDTH = 1280
 const HEIGHT = 800
+
+/**
+ * Which model to load, matched against the picker's option label.
+ *   MODEL="Llama 3.2 1B" node scripts/capture-hero-screenshot.mjs
+ * Defaults to Gemma 4 E2B — the model the listing leads with — but that is the
+ * LARGEST option (~2.9 GB, ~1.4 GB largest shard) and needs real headroom.
+ */
+const MODEL = process.env.MODEL || 'Gemma 4 E2B'
+
+/**
+ * Pre-flight: refuse to start without room for the largest shard. The failure
+ * this prevents is not a clean error — the renderer is killed mid-fetch and the
+ * panel's progress bar freezes on its last value, which reads as a slow
+ * download (see the header). Skip with SKIP_MEMORY_PREFLIGHT=1.
+ */
+const REQUIRED_FREE_SWAP_MB = Number(process.env.REQUIRED_FREE_SWAP_MB || 2048)
+if (process.env.SKIP_MEMORY_PREFLIGHT !== '1') {
+  const usage = execSync('sysctl -n vm.swapusage').toString()
+  const freeMb = Number(/free = ([0-9.]+)M/.exec(usage)?.[1] ?? '0')
+  log(`free swap: ${freeMb.toFixed(0)} MB (need >= ${REQUIRED_FREE_SWAP_MB})`)
+  if (freeMb < REQUIRED_FREE_SWAP_MB) {
+    throw new Error(
+      `Only ${freeMb.toFixed(0)} MB free swap. transformers.js buffers a whole ` +
+        `shard in memory, so this would be killed mid-download with no error.\n` +
+        `Free memory (quitting OrbStack reclaims ~3 GB), pick a smaller model ` +
+        `(MODEL="Llama 3.2 1B"), or set SKIP_MEMORY_PREFLIGHT=1 to override.`,
+    )
+  }
+}
 
 const ctx = await chromium.launchPersistentContext(PROFILE, {
   headless: false,
@@ -67,12 +97,30 @@ page.on('console', (m) => log('[panel]', m.text().slice(0, 300)))
 await page.goto(`chrome-extension://${extensionId}/panel.html`, { waitUntil: 'domcontentloaded' })
 await page.waitForTimeout(3000)
 
-const loadButton = page.getByRole('button', { name: /Load Gemma 4 E2B/i }).first()
+log('selecting model:', MODEL)
+const picker = page.locator('select').first()
+if (await picker.isVisible().catch(() => false)) {
+  await picker.selectOption({ label: new RegExp(MODEL, 'i') }).catch(async () => {
+    // Labels carry a size suffix ("Llama 3.2 1B · ~0.9 GB"); fall back to a
+    // substring match over the real option text rather than guessing the format.
+    const opts = await picker.locator('option').allTextContents()
+    const match = opts.find((o) => o.toLowerCase().includes(MODEL.toLowerCase()))
+    if (!match) throw new Error(`No picker option matches "${MODEL}". Options: ${opts.join(' | ')}`)
+    await picker.selectOption({ label: match })
+  })
+  await page.waitForTimeout(800)
+}
+
+const loadButton = page.getByRole('button', { name: new RegExp(`Load ${MODEL}`, 'i') }).first()
 if (await loadButton.isVisible().catch(() => false)) {
-  log('clicking Load — this downloads ~2.9 GB on a cold profile')
+  log('clicking Load — first load downloads the weights')
   await loadButton.click()
 } else {
-  log('no Load button visible; assuming the model is already cached')
+  // Selecting an option in the picker can itself kick off the load, so a
+  // missing Load button does NOT imply a warm cache — the progress readout
+  // below is the real signal. Saying "already cached" here was misleading:
+  // the 2026-08-20 run printed it and then downloaded from 0%.
+  log('no Load button matched; the picker may have started the load itself')
 }
 
 // Ready == the composer stops telling us to load the model.
@@ -106,8 +154,9 @@ while (Date.now() - start < 120_000) {
   await page.waitForTimeout(1500)
 }
 await page.waitForTimeout(2500)
-await page.screenshot({ path: resolve(OUT, '00-hero-local-stream.png'), fullPage: false })
-log('captured 00-hero-local-stream.png')
+const outFile = '00-hero-local-stream.png'
+await page.screenshot({ path: resolve(OUT, outFile), fullPage: false })
+log('captured', outFile, `(model: ${MODEL})`)
 
 await ctx.close()
 log('done')
