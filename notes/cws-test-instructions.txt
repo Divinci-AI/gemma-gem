@@ -1,0 +1,40 @@
+WHAT THIS EXTENSION DOES
+Runs an open-weight language model on the reviewer's own GPU, in the browser,
+via WebGPU. No account is required to evaluate it.
+
+REQUIREMENTS — PLEASE READ FIRST
+This extension cannot function without WebGPU. Please test on a machine with a
+real GPU that supports shader-f16. To confirm the environment before testing,
+open chrome://gpu and check that "WebGPU" is listed as Hardware accelerated. On
+a VM without GPU passthrough the model will fail to load, and that is an
+environment limitation rather than a defect.
+
+FASTEST WAY TO TEST (about 1 minute of download)
+1. Click the extension's toolbar icon to open the popup.
+2. In the model list, choose "SmolLM2 360M" — approximately 0.3 GB, the
+   smallest option. Click "Load".
+   (The default, Gemma 4 E2B, is ~2.9 GB and takes considerably longer. Any
+   model demonstrates the same functionality.)
+3. Wait for the download to complete; progress is shown inline.
+4. Open the side panel and type any question, for example
+   "Write one sentence about the sea." The answer is generated locally — you can
+   disconnect from the network after the model has loaded and it will still
+   respond.
+
+NO SIGN-IN NEEDED
+Every core feature above works signed out, and no credentials are required to
+review the extension. The "Sign in" button is optional and only enables
+page-aware answers and saving chat to a Divinci account. If you wish to test
+that path as well, please contact us at the listed developer email and we will
+provide a test account.
+
+WHERE NETWORK REQUESTS GO
+- huggingface.co — downloading the model weights (ONNX data files, not code)
+- api.divinci.app and divinci-prod.us.auth0.com — only after an explicit
+  sign-in; nothing is contacted here while signed out
+
+WHAT THE CONTENT SCRIPT DOES
+It renders the assistant's launcher and panel in an isolated Shadow DOM on
+whatever page the user opens it on. It reads page text only while the panel is
+open AND the user is signed in, and only to compute a one-way hash locally. Page
+content is never transmitted.
