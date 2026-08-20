@@ -358,17 +358,21 @@ export function mountChatPanel(
   /** Disclaimer text reflects whether page-reading is on, off, or page-skipped. */
   function renderDisclaimer(): void {
     if (!el.disclaimerText) return
+    // All four branches name the SELECTED model. The first two were hardcoded
+    // to "Gemma" while the last two already used shortLabel, so a Qwen session
+    // read "Gemma runs locally on your device."
+    const model = MODELS[MODEL_ID].shortLabel
     if (!deps.host) {
-      el.disclaimerText.textContent = 'Gemma runs locally on your device.'
+      el.disclaimerText.textContent = `${model} runs locally on your device.`
     } else if (!readPageContentSetting) {
       el.disclaimerText.textContent =
-        'Page reading is off — Gemma only sees the page title & URL.'
+        `Page reading is off — ${model} only sees the page title & URL.`
     } else if (!urlIndexDecision(deps.host.pageHref()).allow) {
       el.disclaimerText.textContent =
-        `This page is sensitive, so ${MODELS[MODEL_ID].shortLabel} is not reading its content.`
+        `This page is sensitive, so ${model} is not reading its content.`
     } else {
       el.disclaimerText.textContent =
-        `${MODELS[MODEL_ID].shortLabel} reads this page's text on your device to answer.`
+        `${model} reads this page's text on your device to answer.`
     }
   }
 
@@ -734,8 +738,10 @@ export function mountChatPanel(
     },
   }
   const inference = new LocalInference(localTransport, {
-    modelId: MODEL_ID,
-    label: MODELS[MODEL_ID].label,
+    // Getters, not values: MODEL_ID changes when the user picks another model
+    // and this object is built once. See the note on LocalInference's opts.
+    modelId: () => MODEL_ID,
+    label: () => MODELS[MODEL_ID].label,
     isLoaded: () => isLoaded,
   })
   const controller = new ChatController(

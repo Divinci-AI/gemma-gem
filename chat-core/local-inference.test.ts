@@ -17,7 +17,11 @@ function fakeTransport() {
 }
 
 function makeInference(t: LocalTransport, isLoaded = true) {
-  return new LocalInference(t, { modelId: 'gemma-4-e2b', label: 'Gemma 4 E2B', isLoaded: () => isLoaded })
+  return new LocalInference(t, {
+    modelId: () => 'gemma-4-e2b',
+    label: () => 'Gemma 4 E2B',
+    isLoaded: () => isLoaded,
+  })
 }
 
 describe('LocalInference', () => {
@@ -86,5 +90,42 @@ describe('LocalInference', () => {
     const id = (f.sent[0] as { requestId: string }).requestId
     f.emit({ type: 'divinci:error', requestId: id, message: 'boom', fatal: false })
     await expect(p).rejects.toThrow(/boom/)
+  })
+})
+
+describe('LocalInference reads the model per request (regression)', () => {
+  // The user can change model mid-session, and LocalInference is constructed
+  // ONCE. When modelId/label were captured by value, the load path loaded the
+  // newly-picked model while this client kept asking for the original — so
+  // every non-default model downloaded, relabelled the UI, and then failed on
+  // send with `Model gemma-4-e2b not loaded`.
+  function switchable(t: LocalTransport) {
+    let current: 'gemma-4-e2b' | 'qwen2.5-0.5b' = 'gemma-4-e2b'
+    const inference = new LocalInference(t, {
+      modelId: () => current,
+      label: () => (current === 'gemma-4-e2b' ? 'Gemma 4 E2B' : 'Qwen2.5 0.5B'),
+      isLoaded: () => true,
+    })
+    return { inference, select: (m: typeof current) => { current = m } }
+  }
+
+  it('sends the model selected at request time, not at construction time', () => {
+    const f = fakeTransport()
+    const { inference, select } = switchable(f.transport)
+
+    void inference.chat({ messages: [{ role: 'user', content: 'one' }] })
+    expect((f.sent[0] as { modelId?: string }).modelId).toBe('gemma-4-e2b')
+
+    select('qwen2.5-0.5b')
+    void inference.chat({ messages: [{ role: 'user', content: 'two' }] })
+    expect((f.sent[1] as { modelId?: string }).modelId).toBe('qwen2.5-0.5b')
+  })
+
+  it('label follows the selected model', () => {
+    const f = fakeTransport()
+    const { inference, select } = switchable(f.transport)
+    expect(inference.label).toBe('Gemma 4 E2B')
+    select('qwen2.5-0.5b')
+    expect(inference.label).toBe('Qwen2.5 0.5B')
   })
 })

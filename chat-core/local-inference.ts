@@ -31,13 +31,31 @@ function newRequestId(): string {
 
 export class LocalInference implements InferenceClient {
   readonly kind = 'local' as const
-  readonly label: string
 
   constructor(
     private readonly transport: LocalTransport,
-    private readonly opts: { modelId: ModelId; label: string; isLoaded: () => boolean },
-  ) {
-    this.label = opts.label
+    /**
+     * ⚠️ ALL THREE ARE GETTERS, READ PER REQUEST. The user can change model
+     * mid-session, and this object is constructed ONCE.
+     *
+     * `modelId` and `label` used to be plain values while only `isLoaded` was a
+     * getter. The load path read the surface's live model id and loaded the
+     * newly-picked model; this client kept the id captured at construction and
+     * asked the offscreen host for the ORIGINAL one, which answered
+     * `Model gemma-4-e2b not loaded — call divinci:load first`. Selecting any
+     * non-default model — 5 of the 6 shipped — produced a working download, a
+     * correctly re-labelled UI, and an error on send.
+     */
+    private readonly opts: {
+      modelId: () => ModelId
+      label: () => string
+      isLoaded: () => boolean
+    },
+  ) {}
+
+  /** Read live: the label follows the selected model. */
+  get label(): string {
+    return this.opts.label()
   }
 
   isReady(): boolean {
@@ -118,7 +136,7 @@ export class LocalInference implements InferenceClient {
       this.transport.send({
         type: 'divinci:chat',
         requestId,
-        modelId: this.opts.modelId,
+        modelId: this.opts.modelId(),
         messages: req.messages,
         maxNewTokens: req.maxNewTokens,
         temperature: req.temperature,
