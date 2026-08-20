@@ -29,7 +29,7 @@ host for the original.
 `chat-core/local-inference.test.ts` ("sends the model selected at request time,
 not at construction time"), mutation-tested.
 
-## 2. A failed model download shows a frozen progress bar, never an error
+## 2. A failed model download shows a frozen progress bar, never an error — FIXED
 
 `transformers.js` buffers a whole shard in memory before writing it to the Cache
 API, so a ~1.4 GB shard is a ~1.4 GB renderer allocation. Under memory pressure
@@ -40,6 +40,23 @@ and no buffer.
 
 Same shape as the `[ai-reply-failed]` / `[audio-transcript-failed]` classes in
 the server repo: the failure path renders as success.
+
+**Fixed:** `ui/load-watchdog.ts`. Progress events arrive per chunk, so silence
+longer than 120s while loading means the producer is gone — the panel clears its
+loading state and says so, naming memory as the likely cause and noting that
+finished parts stay cached. It re-checks `isLoading` inside the callback, so a
+load that completed between the timer firing and the callback running cannot
+raise a false error.
+
+Kept as its own module with injected timers because the panel is DOM-heavy and
+would not otherwise be testable. 5 unit tests, mutation-tested (dropping the
+re-check, and dropping the re-arm reset, each fail a distinct test).
+
+⚠️ NOT covered: an end-to-end browser reproduction. Simulating a *silently*
+killed renderer is not the same as going offline — offline produces a normal
+fetch error, which the panel already handled. An attempt at that test passed
+trivially for the wrong reason and was deleted rather than kept as false
+assurance.
 
 ## 3. A crash leaves a stale load-mirror that blocks a different model
 

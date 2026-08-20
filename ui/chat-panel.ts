@@ -24,6 +24,7 @@
  * surface (per the project XSS guidelines: defend at the render boundary).
  */
 
+import { createLoadWatchdog } from '@/ui/load-watchdog'
 import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
 import {
   MODELS,
@@ -1287,6 +1288,24 @@ export function mountChatPanel(
     loadModel()
   }
 
+  // ---- Load stall watchdog ------------------------------------------------
+  // See ui/load-watchdog.ts for why this exists and how the threshold is
+  // chosen. Kept in its own module so the behaviour is unit-testable.
+  const LOAD_STALL_MS = 120_000
+  const loadWatchdog = createLoadWatchdog({
+    thresholdMs: LOAD_STALL_MS,
+    isLoading: () => isLoading,
+    onStall: () => {
+      isLoading = false
+      renderModelState()
+      showError(
+        `${MODELS[MODEL_ID].shortLabel} stopped downloading and did not report an ` +
+          `error — this usually means the browser ran out of memory. Close other ` +
+          `tabs or apps and press Load again; finished parts stay cached.`,
+      )
+    },
+  })
+
   // ---- Port event handling ------------------------------------------------
   // Load + model-state events only. Chat events (token/done/aborted/chat
   // errors) are consumed by LocalInference → ChatController via the transport
@@ -1295,11 +1314,13 @@ export function mountChatPanel(
     switch (ev.type) {
       case 'divinci:load-progress':
         isLoading = true
+        loadWatchdog.arm()
         if (typeof ev.fromCache === 'boolean') loadFromCache = ev.fromCache
         renderProgress(ev.bytesLoaded, ev.bytesTotal, loadFromCache)
         renderModelState()
         return
       case 'divinci:load-done':
+        loadWatchdog.disarm()
         isLoading = false
         isLoaded = true
         renderModelState()
@@ -1320,6 +1341,7 @@ export function mountChatPanel(
           streamingBubble = null
         }
         if (isLoading) {
+          loadWatchdog.disarm()
           isLoading = false
           if (ev.fatal) isLoaded = false
           renderModelState()
@@ -1336,6 +1358,7 @@ export function mountChatPanel(
   function loadModel(): void {
     if (MODELS[MODEL_ID]?.comingSoon) return // not loadable (blocked upstream)
     isLoading = true
+    loadWatchdog.arm()
     renderModelState()
     // Remember the chosen model so the SW's auto-warm reloads it (from the disk
     // cache, no re-download) after a refresh / SW eviction tears down the
