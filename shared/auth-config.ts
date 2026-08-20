@@ -26,4 +26,4 @@ export const PROD_AUTH0_CLIENT_ID_UNSET = '__SET_PROD_AUTH0_CLIENT_ID__'
  *
  * `wxt.config.ts` refuses to `zip` a production build while this is the sentinel.
  */
-export const PROD_AUTH0_CLIENT_ID: string = PROD_AUTH0_CLIENT_ID_UNSET
+export const PROD_AUTH0_CLIENT_ID: string = 'HXfzAyUYPCX5t5gvSbU3Uo5sYpTUJ1Wq'
