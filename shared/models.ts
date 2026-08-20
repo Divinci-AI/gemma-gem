@@ -324,9 +324,20 @@ const isDevBuild =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
 
-export const ALLOWED_WEB_APP_ORIGINS = [
-  'https://chat.divinci.app',
-  'https://chat.stage.divinci.app',
-  'https://chat.dev.divinci.app',
-  ...(isDevBuild ? ['http://localhost:8080'] : []),
-]
+export const ALLOWED_WEB_APP_ORIGINS = isDevBuild
+  ? [
+      // Dev builds are a SUPERSET: a developer testing locally may point at any
+      // environment, including production. The narrowing that matters is on the
+      // published package, below.
+      'https://chat.divinci.app',
+      'https://chat.stage.divinci.app',
+      'https://chat.dev.divinci.app',
+      'http://localhost:8080',
+    ]
+  : // A production build serves the production web app ONLY. Every extra origin
+    // in a published package is attack surface and Chrome Web Store review
+    // surface; internal staging testing uses the dev build loaded unpacked.
+    // MUST stay in lockstep with WEB_APP_ORIGINS in wxt.config.ts — the manifest
+    // grants the port, this list is the runtime re-check, and an origin present
+    // in only one of them either never connects or connects unchecked.
+    ['https://chat.divinci.app']

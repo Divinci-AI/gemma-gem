@@ -3,32 +3,105 @@
  *
  * "Account mode": instead of the user pasting Cloudflare/Brave/Serper tokens,
  * they sign into their Divinci account (Auth0 PKCE) and the extension proxies
- * tool-calling through stage.divinci.app, which runs the Kimi web-search loop
- * with SERVER-held keys. This is the STAGING build — domain/audience/client_id
- * below all point at the divinci-staging tenant + api.stage.divinci.app.
+ * tool-calling through the Divinci public API, which runs the Kimi web-search
+ * loop with SERVER-held keys.
+ *
+ * ⛔ ENVIRONMENT IS BUILD-TIME, AND PRODUCTION IS THE DEFAULT.
+ * Until 2026-08-20 every build — including `pnpm build:prod`, the one that
+ * feeds `wxt zip` and therefore the Chrome Web Store — hardcoded the STAGING
+ * tenant and `api.stage.divinci.app`. A published extension would have signed
+ * real users into the staging Auth0 tenant and driven staging infrastructure,
+ * which is deliberately paused when idle to save cost (see the server repo's
+ * "Staging's database is PAUSED by default" note). That is an outage for every
+ * installed user, not a testing inconvenience.
+ *
+ * The split is keyed on `import.meta.env.DEV` — the SAME idiom
+ * `shared/models.ts` already uses for ALLOWED_WEB_APP_ORIGINS, so the two
+ * cannot drift apart: dev builds (`pnpm dev`, `pnpm build`) get staging,
+ * production builds (`pnpm build:prod`) get production. Keep the host lists in
+ * `wxt.config.ts` in lockstep — a host the manifest does not grant is a
+ * silently-failing fetch, not a build error.
  *
  * Everything here is pure (URL/body shaping, token parsing). The chrome.identity
  * orchestration that uses it lives in background/divinci-auth.ts (service worker).
  */
 
-/** Auth0 staging SPA application dedicated to this extension (PKCE, no secret). */
-export const DIVINCI_AUTH = {
-  domain: 'divinci-staging.us.auth0.com',
-  clientId: '6sk4DHy694PMCpToUkIYODnkvffyzfGY',
+/**
+ * True during `pnpm dev` / `pnpm build` (development mode), false during
+ * `pnpm build:prod`. Mirrors `isDevBuild` in shared/models.ts verbatim.
+ */
+const isDevBuild =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  typeof import.meta !== 'undefined' && (import.meta as any).env?.DEV === true
+
+/**
+ * Sentinel for the production Auth0 client id. The production tenant
+ * (`divinci-prod.us.auth0.com`) needs its OWN SPA application for this
+ * extension — an Auth0 application is per-tenant, so the staging client id is
+ * meaningless there and would fail `unauthorized_client` at /authorize.
+ *
+ * It is a sentinel rather than an empty string on purpose: `wxt.config.ts`
+ * imports `DIVINCI_AUTH` and REFUSES to `zip` a production build while this
+ * value is still in place. An empty string would have produced a store package
+ * whose sign-in silently 400s.
+ *
+ * To fill it: Auth0 dashboard → divinci-prod tenant → Applications → Create →
+ * Single Page Application (PKCE, no secret) → add
+ * `https://<extension-id>.chromiumapp.org/` to Allowed Callback URLs → paste
+ * the Client ID here. See STORE_LISTING.md "Production Auth0 application".
+ */
+export const PROD_AUTH0_CLIENT_ID_UNSET = '__SET_PROD_AUTH0_CLIENT_ID__'
+
+export interface DivinciEnvironment {
+  /** Auth0 tenant domain. */
+  readonly authDomain: string
+  /** Auth0 SPA application (PKCE, no secret) dedicated to this extension. */
+  readonly authClientId: string
   /** Public-API audience the access token must be minted for. */
-  audience: 'chat.stage.divinci.app:8080',
+  readonly authAudience: string
+  /** Public API base. */
+  readonly apiBase: string
+  /**
+   * Embed client base, host of the standalone shared-chat viewer
+   * (`/chat/shared/:token`). Matches the web app's `EMBED_CLIENT_URL`.
+   */
+  readonly embedBase: string
+}
+
+export const PRODUCTION: DivinciEnvironment = {
+  authDomain: 'divinci-prod.us.auth0.com',
+  authClientId: PROD_AUTH0_CLIENT_ID_UNSET,
+  authAudience: 'chat.divinci.app:8080',
+  apiBase: 'https://api.divinci.app',
+  embedBase: 'https://embed.divinci.app',
+}
+
+export const STAGING: DivinciEnvironment = {
+  authDomain: 'divinci-staging.us.auth0.com',
+  authClientId: '6sk4DHy694PMCpToUkIYODnkvffyzfGY',
+  authAudience: 'chat.stage.divinci.app:8080',
+  apiBase: 'https://api.stage.divinci.app',
+  embedBase: 'https://embed.stage.divinci.app',
+}
+
+/** The environment this build talks to. Production unless this is a dev build. */
+export const DIVINCI_ENVIRONMENT: DivinciEnvironment = isDevBuild ? STAGING : PRODUCTION
+
+/** Auth0 SPA application for this build's tenant (PKCE, no secret). */
+export const DIVINCI_AUTH = {
+  domain: DIVINCI_ENVIRONMENT.authDomain,
+  clientId: DIVINCI_ENVIRONMENT.authClientId,
+  /** Public-API audience the access token must be minted for. */
+  audience: DIVINCI_ENVIRONMENT.authAudience,
   /** offline_access → refresh token so we can silently renew. */
   scope: 'openid profile email offline_access',
 } as const
 
-/** Staging public API base. The extension is a staging/testing build. */
-export const DIVINCI_API_BASE = 'https://api.stage.divinci.app'
+/** Public API base for this build's environment. */
+export const DIVINCI_API_BASE = DIVINCI_ENVIRONMENT.apiBase
 
-/**
- * Embed client base, host of the standalone shared-chat viewer
- * (`/chat/shared/:token`). Matches the web app's `EMBED_CLIENT_URL` for staging.
- */
-export const EMBED_CLIENT_BASE = 'https://embed.stage.divinci.app'
+/** Embed client base for this build's environment. */
+export const EMBED_CLIENT_BASE = DIVINCI_ENVIRONMENT.embedBase
 
 /** chrome.storage.local key for the OAuth token bundle (SW-owned; never sent to offscreen). */
 export const STORAGE_KEY_DIVINCI_AUTH = 'divinci_oauth_tokens'

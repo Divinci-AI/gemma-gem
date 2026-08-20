@@ -101,10 +101,14 @@ any time to stop all of §2–§4.
 - **huggingface.co** (and CDN `cas-bridge.xethub.hf.co`) — to download
   the model files (Hugging Face's privacy policy applies:
   https://huggingface.co/privacy).
-- **Divinci's identity provider** (`divinci-staging.us.auth0.com`, and
-  the production equivalent) — only during sign-in.
-- **Divinci's API** (`api.divinci.app` and staging/dev equivalents) —
-  for the signed-in features in §3 and §4.
+- **Divinci's identity provider** (`divinci-prod.us.auth0.com`) — only
+  during sign-in.
+- **Divinci's API** (`api.divinci.app`) — for the signed-in features in
+  §3 and §4.
+
+The published extension contacts the production hosts above and no
+others. Internal development builds (never distributed through the
+Chrome Web Store) target the staging equivalents instead.
 
 ## 7. What we do **not** do
 

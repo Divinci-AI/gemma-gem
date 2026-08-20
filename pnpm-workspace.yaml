@@ -1,0 +1,28 @@
+# This extension is its own pnpm root (`packages: ["."]`), NOT part of the
+# server monorepo's workspace. pnpm 10 reads build-approval settings ONLY from
+# a workspace file — `pnpm.onlyBuiltDependencies` in package.json and
+# `only-built-dependencies[]` in .npmrc are both silently ignored.
+#
+# ⛔ These values were placeholders ("set this to true or false") until
+# 2026-08-20, so `pnpm install` exited 1 on every run. pnpm 10 EXITS NON-ZERO
+# when it withholds a build script, which breaks the `&&` in
+# `build:prod && zip` — the install looks like a cosmetic notice and the build
+# never runs.
+packages:
+  - .
+
+allowBuilds:
+  # Required: esbuild's postinstall fetches its platform binary. Without it
+  # vite/wxt cannot bundle at all.
+  esbuild: true
+  # Required: protobufjs' postinstall generates its dist entry points, pulled in
+  # transitively by @huggingface/transformers.
+  protobufjs: true
+  # Not used: this is a BROWSER extension and inference runs through
+  # onnxruntime-web (+ the ORT wasm copied by wxt.config.ts). The node binding
+  # would download a large native artifact that nothing here loads.
+  onnxruntime-node: false
+  # Not used: no build step in this repo processes images through sharp.
+  sharp: false
+  # Not used: legacy shim, no build step depends on its native fallback.
+  spawn-sync: false

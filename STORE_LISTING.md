@@ -66,7 +66,7 @@ Apache-2.0 licensed. Source: https://github.com/Divinci-AI/gemma-gem (branch: di
 Forked from kessler/gemma-gem with attribution preserved in LICENSE.
 
 PRIVACY
-By default the extension is local-only — your chats with the on-device model never leave your computer. Optional signed-in features send specific data to Divinci: your basic profile at sign-in; while the side panel is open, a trimmed page address + a one-way hash of pages you view (to look up Divinci's public-web index); and, for page-aware answers or account-mode chat, your chat message. Sensitive sites (banking, webmail, healthcare, sign-in pages) are skipped, and you can turn these features off in Advanced settings → Privacy. We never sell your data, show ads, or track you across the web. Full privacy policy: <your privacy policy URL>
+By default the extension is local-only — your chats with the on-device model never leave your computer. Optional signed-in features send specific data to Divinci: your basic profile at sign-in; while the side panel is open, a trimmed page address + a one-way hash of pages you view (to look up Divinci's public-web index); and, for page-aware answers or account-mode chat, your chat message. Sensitive sites (banking, webmail, healthcare, sign-in pages) are skipped, and you can turn these features off in Advanced settings → Privacy. We never sell your data, show ads, or track you across the web. Full privacy policy: https://divinci.ai/local-inference-privacy/
 ```
 
 ---
@@ -95,7 +95,7 @@ The extension uses chrome.storage to persist the user's last-selected model id a
 
 ### `externally_connectable`
 ```
-The extension lets chat.divinci.app pages use the local model over a chrome.runtime port. The manifest restricts externally_connectable to a small allowlist of Divinci AI origins (chat.divinci.app, chat.stage.divinci.app, chat.dev.divinci.app). The extension also re-validates the origin at port-acceptance time. No other site can talk to the extension this way.
+The extension lets chat.divinci.app pages use the local model over a chrome.runtime port. The manifest restricts externally_connectable to exactly one origin, https://chat.divinci.app — our own web application. The extension also re-validates the origin at port-acceptance time as defense in depth. No other site can talk to the extension this way.
 ```
 
 ### `identity`
@@ -103,9 +103,9 @@ The extension lets chat.divinci.app pages use the local model over a chrome.runt
 Used only when the user explicitly clicks "Sign in / Sign up". The extension calls chrome.identity.launchWebAuthFlow to complete a standard OAuth (Auth0) authorization-code + PKCE sign-in to the user's own Divinci account. This enables the optional signed-in features (page-index lookup and account-mode chat). The resulting access token is stored on-device in the background service worker and never exposed to web pages or other contexts. The user can sign out at any time, which deletes the stored tokens.
 ```
 
-### host permissions (`api.divinci.app`, `api.stage.divinci.app`, `api.dev.divinci.app`, `divinci-staging.us.auth0.com`)
+### host permissions (`api.divinci.app`, `divinci-prod.us.auth0.com`)
 ```
-Required for the optional signed-in features. The Auth0 origin is contacted only during sign-in (the OAuth authorize/token exchange). The api.divinci.app origins receive the authenticated requests: looking up whether the current page is in Divinci's shared public-web index, retrieving page-scoped context for grounding, and (if the user enables it) account-mode chat. No other hosts are contacted for these features.
+Required for the optional signed-in features. divinci-prod.us.auth0.com is our identity provider and is contacted only during sign-in (the OAuth token exchange). api.divinci.app receives the authenticated requests: looking up whether the current page is in Divinci's shared public-web index, retrieving page-scoped context for grounding, and (if the user enables it) account-mode chat. These two hosts are the only ones the extension is granted, and no other hosts are contacted for these features.
 ```
 
 ### content script (`<all_urls>`)
@@ -165,7 +165,10 @@ core page-aware + chat features), and **not** sold to third parties.
 
 You need to host the privacy policy at a public URL before you can submit, then paste that URL into the CWS "Privacy policy URL" field.
 
-**The canonical policy text is `PRIVACY.md` in the repo root** — host that verbatim (e.g. at `https://divinci.ai/legal/local-inference-privacy` or as a section of `https://divinci.ai/privacy-policy`). Do NOT maintain a second copy here; keep `PRIVACY.md`, this listing, and the Data Safety form above in sync. (The previous inline draft here was the pre-1.0 "collects nothing" text and is intentionally removed — it no longer matches what the extension does.)
+**The canonical policy text is `PRIVACY.md` in the repo root.** It is hosted at
+**https://divinci.ai/local-inference-privacy/** (live; also summarised as §2.8 of
+https://divinci.ai/privacy-policy, which links to it). Paste that URL into the CWS
+"Privacy policy URL" field. Do NOT maintain a second copy here; keep `PRIVACY.md`, this listing, and the Data Safety form above in sync. (The previous inline draft here was the pre-1.0 "collects nothing" text and is intentionally removed — it no longer matches what the extension does.)
 
 ---
 
@@ -180,13 +183,65 @@ You need to host the privacy policy at a public URL before you can submit, then 
 
 ---
 
+## Production Auth0 application (referenced from shared/divinci-account.ts)
+
+The published extension signs users into the **production** tenant
+`divinci-prod.us.auth0.com`, with audience `chat.divinci.app:8080`. An Auth0
+application is per-tenant, so the staging client id is unknown there and
+/authorize would answer `unauthorized_client`.
+
+**This is a chicken-and-egg and the order matters.** The Auth0 callback URL is
+`https://<extension-id>.chromiumapp.org/`, and for a Chrome Web Store listing the
+extension id is assigned **by the store**, at draft creation — it is NOT the
+`laeebjagghfeepomjhbfohefghonemeo` derived from our pinned manifest key. (The
+store also REJECTS a new item whose manifest carries a `key` at all:
+`key field is not allowed in manifest.` The build now omits it outside
+development.)
+
+1. `DIVINCI_BOOTSTRAP_DRAFT=1 pnpm zip` — builds one package whose sign-in
+   cannot work, and says so loudly. Without the variable the build refuses,
+   because a store package whose sign-in silently 400s is indistinguishable from
+   a working one until a real user clicks the button.
+2. Upload it as a **draft** (Add new item). Do **not** submit. Read the **Item
+   ID** from the dashboard.
+3. Auth0 → `divinci-prod` tenant → Applications → Create → **Single Page
+   Application** (PKCE, no client secret).
+   - **Allowed Callback URLs**: `https://<item-id>.chromiumapp.org/`
+   - **Allowed Web Origins**: `chrome-extension://<item-id>`
+   - Both fields are comma-separated; keep any dev entry alongside during the
+     transition rather than swapping it out.
+4. Paste the Client ID into `PRODUCTION.authClientId` in
+   `shared/divinci-account.ts`, replacing `__SET_PROD_AUTH0_CLIENT_ID__`.
+5. Add the item id to `PRODUCTION_EXTENSION_ID`'s candidate list in the server
+   repo's `workspace/clients/web/src/services/local-llm/extension-capabilities.ts`,
+   or chat.divinci.app will not detect the published extension.
+6. `pnpm zip` (no bootstrap variable) and upload that package for review.
+
+---
+
 ## Pre-submission checklist
 
-- [ ] Production zip exists: `.output/divinci-local-inference-0.1.0-chrome.zip` ✅ (already built)
-- [ ] CWS developer account exists (created by you, $5 one-time fee)
-- [ ] Privacy policy URL is live and reachable
-- [ ] At least one 1280×800 screenshot saved
-- [ ] Promotional 128×128 icon ready (we already ship one in icon/128.png)
+- [x] Privacy policy URL live: https://divinci.ai/local-inference-privacy/
+- [x] Store icon 128×128 shipped (`public/icon/128.png`)
+- [x] Production build targets production hosts only (guarded by
+      `shared/environment-lockstep.test.ts` + the `build:done` hook)
+- [x] `key` omitted from non-development builds
+- [ ] CWS developer account + one-time registration fee
+- [ ] Group publisher created (⚠️ **one per Google account, for the account's
+      lifetime** — deleting it does not restore the quota; name it correctly
+      first time)
+- [ ] **Trader** declared, verified as an **organization** (D-U-N-S 149913201)
+      with an SMS-capable phone. Legal name, address, email, phone and DUNS are
+      **published on the listing**.
+- [ ] Bootstrap draft uploaded, Item ID captured
+- [ ] Production Auth0 SPA application created; `PRODUCTION.authClientId` set
+- [ ] Item ID added to the web app's extension-id candidates
+- [ ] 1–5 screenshots at exactly **1280×800**
+- [ ] Small promo tile **440×280** (required). Marquee 1400×560 optional.
+- [ ] Bump `package.json` `version` if anything changed since the last build
+- [ ] Final `pnpm zip` re-run after any change
 - [ ] Decide visibility: **Unlisted** for the alpha
-- [ ] Bump `package.json` `version` if anything changed since last build
-- [ ] Re-run `pnpm build:prod && pnpm zip` after any change
+
+⚠️ Review latency: developer.chrome.com currently warns of a submission surge
+and extended review times, and reviews run slower for new developers, new
+extensions, and broad host permissions. Budget weeks, not days.
