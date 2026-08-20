@@ -28,3 +28,6 @@ test-results/
 *.njsproj
 *.sln
 *.sw?
+
+# Persistent Chromium profile holding the cached model weights (~3 GB)
+.playwright-hero-profile
