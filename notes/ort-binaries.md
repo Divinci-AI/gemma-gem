@@ -31,7 +31,16 @@ proxy-worker init), and transformers.js additionally forces
 They exist because ORT's ESM carries `new URL('…wasm', import.meta.url)` and
 Vite emits an asset for that unconditionally. Removing them means suppressing
 the *emission*, not deduplicating a copy. Five attempts at the adjacent
-"dedupe" framing were reverted; this reframing has not been tried.
+"dedupe" framing were reverted; the reframing worked on the first try —
+`build/ort-asset-emission.ts` splits the literal so Vite cannot resolve it,
+leaving the evaluated string identical.
+
+⚠️ **Not verified at runtime.** The argument that the branch is dead is static:
+ORT installs `locateFile` whenever `wasmPaths` is set, so the `new URL`
+fallback is not taken, and the other site is guarded by `!wasmPaths`. If that
+is wrong, ORT 404s at SESSION CREATION — which no test here reaches, because
+every model load starts with a multi-hundred-MB download. Run
+`RUN_REAL_INFERENCE=1 pnpm e2e` before shipping a store update.
 
 ## Fixed 2026-08-21
 
@@ -77,3 +86,15 @@ the manifest CSP (`connect-src` unrestricted, `wasm-unsafe-eval` present) does
 not stop that. The top-level assignment in `chat-host.ts` is what keeps a
 "runs entirely on your device" extension from fetching 23 MB off a CDN. Treat
 it as load-bearing, not as tidy-up.
+
+
+## Package size, 2026-08-21
+
+| | unpacked | zipped |
+|---|---|---|
+| before | 78.89 MB | 21.02 MB |
+| after unifying on one ORT build | 52.39 MB | — |
+| after suppressing the dead asset | **28.82 MB** | **9.2 MB** |
+
+Nothing was compressed or removed from the product: one wasm variant was never
+loadable, and one was never fetched.

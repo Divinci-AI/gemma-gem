@@ -11,6 +11,9 @@ import {
 } from './build/web-accessible'
 import { findStagingLeaks } from './build/no-staging-leak'
 import { missingOrtBinaries, ortRequirements } from './build/ort-binaries'
+import { stripUnusedOrtWasmAsset, emittedWasmAssets } from './build/ort-asset-emission'
+
+const ortAssetPlugin = stripUnusedOrtWasmAsset()
 
 function copyOrtFiles() {
   const require = createRequire(import.meta.url)
@@ -294,6 +297,21 @@ export default defineConfig({
         )
       }
 
+      // A wasm under assets/ is one Vite emitted from a `new URL` ORT never
+      // evaluates — 23.57 MB of it. See build/ort-asset-emission.ts.
+      const strayWasm = emittedWasmAssets(wxt.config.outDir, fsApi, joinPath)
+      if (strayWasm.length > 0) {
+        throw new Error(
+          'Vite emitted wasm into assets/ that nothing fetches:\n' +
+            strayWasm.map((f) => `  - ${f}`).join('\n') +
+            `\n(the ORT plugin defused ${ortAssetPlugin.rewrites} reference(s)). ` +
+            'ORT probably changed the shape of its `new URL(…, import.meta.url)` ' +
+            'call, so the regex in build/ort-asset-emission.ts no longer matches. ' +
+            'Re-read that file before widening it — the whole argument for ' +
+            'removing the asset is that the branch is dead.',
+        )
+      }
+
       const surplus = unnecessaryExposure(wxt.config.outDir, fsApi, joinPath)
       if (surplus.length > 0) {
         throw new Error(
@@ -329,6 +347,7 @@ export default defineConfig({
     },
   },
   vite: () => ({
+    plugins: [ortAssetPlugin],
     build: {
       target: 'esnext',
       // Ship neither source maps nor readable source in a production build:
