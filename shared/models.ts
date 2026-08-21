@@ -124,8 +124,13 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     // WORKS in the side panel on the WASM execution provider (verified
     // 2026-08-21: loads, then answers a system+user prompt in ~9.9s). Still
     // gated because the in-page DOCK, which runs inference in the page-context
-    // iframe, loads but stalls before emitting tokens. Flip comingSoon off once
-    // that path is understood.
+    // iframe, loads but stalls before emitting tokens.
+    //
+    // ⛔ `device: 'wasm'` is INERT right now. The ONNX Runtime alias and the
+    // WASM binaries it needs were reverted while this model is gated — they
+    // cost ~3.9 MB of package and made the WebGPU binary set fragile, for a
+    // model nobody can select. Un-gating is therefore NOT a one-line change:
+    // wxt.config.ts fails the build and lists the three things to restore.
     comingSoon: true,
     // Blocked on upstream lfm2 WebGPU kernels. Shown as "Coming soon", not
     // loadable, until upstream lands.

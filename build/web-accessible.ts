@@ -35,14 +35,6 @@ export const WEB_ACCESSIBLE_RESOURCES = [
   // ORT wasm binaries, fetched by onnxruntime-web from inside the iframe.
   // NOT `assets/*` — that also exposed the popup stylesheet.
   'assets/ort-wasm-*.wasm',
-  // The self-hosted ORT copies that `wasmPaths` points at. The WebGPU path does
-  // not need these (transformers.js loads its own jsep build out of assets/),
-  // which is why their absence went unnoticed — but a model pinned to
-  // device:'wasm' fetches them from INSIDE the page-context inference iframe,
-  // where anything not web-accessible is simply blocked. The symptom is a load
-  // that never completes and never errors.
-  'ort/ort-wasm-*.mjs',
-  'ort/ort-wasm-*.wasm',
 ]
 
 /** Pages framed from a web origin; the roots of the reachability walk. */

@@ -18,25 +18,13 @@ function copyOrtFiles() {
   const destDir = resolve('public/ort')
   mkdirSync(destDir, { recursive: true })
 
+  // WebGPU only. The WASM execution-provider binaries (plain + jsep, ~37 MB)
+  // are NOT shipped: the sole device:'wasm' model is gated behind `comingSoon`,
+  // so nothing can reach them, and the ORT alias they need is reverted — see
+  // the guard in this file and the LFM2.5 entry in shared/models.ts.
   const files = [
-    // WebGPU (JSEP/asyncify) path.
     'ort-wasm-simd-threaded.asyncify.mjs',
     'ort-wasm-simd-threaded.asyncify.wasm',
-    // WASM execution provider, for models pinned to device:'wasm'.
-    //
-    // ⚠️ ORT resolves BOTH of these relative to `wasmPaths`, and it reaches for
-    // the jsep build even when the requested backend is plain wasm. Ship only
-    // the plain pair and initialisation fails with
-    //   "no available backend found. ERR: [wasm] Failed to fetch dynamically
-    //    imported module: .../ort-wasm-simd-threaded.jsep.mjs"
-    // …which in the extension surfaces as a load that never finishes and never
-    // errors, because the CDN fallback baked into transformers.js is blocked by
-    // our CSP. Measured 2026-08-21: with all four present, LFM2.5 loads in ~30s
-    // and generates a 58-token prompt in ~7s.
-    'ort-wasm-simd-threaded.mjs',
-    'ort-wasm-simd-threaded.wasm',
-    'ort-wasm-simd-threaded.jsep.mjs',
-    'ort-wasm-simd-threaded.jsep.wasm',
   ]
 
   for (const file of files) {
@@ -45,13 +33,6 @@ function copyOrtFiles() {
 }
 
 copyOrtFiles()
-
-/** Absolute path to ORT's all-backends ESM bundle (see the alias below). */
-const ORT_ALL_BUNDLE = (() => {
-  const require = createRequire(import.meta.url)
-  const ortDist = resolve(dirname(require.resolve('onnxruntime-web')))
-  return resolve(ortDist, 'ort.all.bundle.min.mjs')
-})()
 
 const ALLOWED_MODES = new Set(['development', 'production'])
 const modeIndex = process.argv.indexOf('--mode')
@@ -104,6 +85,38 @@ if (mode !== 'development' && process.argv.includes('zip')) {
         '`https://<extension-id>.chromiumapp.org/` as an Allowed Callback URL, then set\n' +
         '`PRODUCTION.authClientId` in shared/divinci-account.ts.\n' +
         'For the very first draft upload only, see DIVINCI_BOOTSTRAP_DRAFT above.',
+    )
+  }
+}
+
+// ⛔ A device:'wasm' model cannot work while the ORT alias is reverted.
+//
+// LFM2.5 needs THREE things together: `device: 'wasm'`, ORT's all-backends
+// bundle aliased over `onnxruntime-web/webgpu`, and the plain + jsep WASM
+// binaries copied above. All three were verified working on 2026-08-21 (loads,
+// then answers a system+user prompt in ~9.9s in the side panel) and then
+// deliberately reverted, because the model is gated behind `comingSoon` and the
+// alias cost ~3.9 MB of package size plus a WebGPU binary set that turned out
+// to be fragile.
+//
+// Without this guard, un-gating the model is a ONE-LINE change that produces a
+// load which never completes and never errors — the exact failure that cost a
+// day to diagnose. Fail the build instead, and say what to restore.
+{
+  const modelsSrc = readFileSync(resolve('shared/models.ts'), 'utf-8')
+  const reachableWasmModel = modelsSrc
+    .split(/^  '/m)
+    .some((entry) => /device:\s*'wasm'/.test(entry) && !/comingSoon:\s*true/.test(entry))
+  if (reachableWasmModel) {
+    throw new Error(
+      "A model declares device:'wasm' and is no longer gated by `comingSoon`, " +
+        'but the ONNX Runtime alias it needs is reverted.\n' +
+        'Restore all three together (see commit "LFM2.5 runs again"):\n' +
+        "  1. vite resolve.alias: 'onnxruntime-web/webgpu' -> ORT's ort.all.bundle.min.mjs\n" +
+        "  2. copy ort-wasm-simd-threaded{,.jsep}.{mjs,wasm} in copyOrtFiles()\n" +
+        "  3. expose 'ort/ort-wasm-*.{mjs,wasm}' in build/web-accessible.ts\n" +
+        '  …and re-verify a WebGPU model too — the alias changes which binaries\n' +
+        '  the WebGPU path resolves, so it is not a wasm-only change.',
     )
   }
 }
@@ -261,19 +274,6 @@ export default defineConfig({
     },
   },
   vite: () => ({
-    resolve: {
-      alias: {
-        // transformers.js imports `onnxruntime-web/webgpu`, a build variant that
-        // registers the WebGPU/JSEP backend. A model pinned to device:'wasm'
-        // then finds no wasm backend registered and the load never settles.
-        // The `.all.` bundle registers every execution provider, so both
-        // device:'webgpu' and device:'wasm' resolve. Verified in an isolated
-        // page: with this bundle LFM2.5 loads in ~30s on wasm and answers a
-        // 58-token system+user prompt in ~7s — the exact prompt that hangs on
-        // the WebGPU path.
-        'onnxruntime-web/webgpu': ORT_ALL_BUNDLE,
-      },
-    },
     build: {
       target: 'esnext',
       // Ship neither source maps nor readable source in a production build:
