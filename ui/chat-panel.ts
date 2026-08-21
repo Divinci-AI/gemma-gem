@@ -25,6 +25,11 @@
  */
 
 import { createLoadWatchdog } from '@/ui/load-watchdog'
+import {
+  isLoadable,
+  modelMenuStatus,
+  shouldAdoptRememberedModel,
+} from '@/shared/model-availability'
 import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
 import {
   MODELS,
@@ -285,9 +290,9 @@ export function mountChatPanel(
   // Hydrate from a previously-remembered model (popup load / prior session).
   void chrome.storage.local.get(STORAGE_KEY_MODEL).then((stored) => {
     const remembered = stored[STORAGE_KEY_MODEL] as ModelId | undefined
-    // Skip a `comingSoon` remembered model (e.g. LFM2.5) — it isn't loadable and
-    // would leave the dock stuck trying to load it. Fall back to the default.
-    if (remembered && MODELS[remembered] && !MODELS[remembered].comingSoon && remembered !== MODEL_ID) {
+    // A gated remembered model is ignored — adopting it would leave the dock
+    // stuck trying to load something that cannot load. See model-availability.
+    if (shouldAdoptRememberedModel(remembered, MODEL_ID)) {
       MODEL_ID = remembered
       renderModelIdentity()
       renderModelState()
@@ -1009,10 +1014,11 @@ export function mountChatPanel(
       size.className = 'dls-model-menu-size'
       // Coming-soon models aren't loadable; resident models switch instantly;
       // others show their download size.
-      size.textContent = cfg.comingSoon ? 'Coming soon' : resident ? 'loaded' : cfg.downloadSize
+      const status = modelMenuStatus(cfg, resident)
+      size.textContent = status.label
       if (resident) size.classList.add('dls-model-menu-loaded')
       item.append(check, name, size)
-      if (cfg.comingSoon) {
+      if (status.disabled) {
         item.classList.add('is-disabled')
         item.disabled = true
         item.setAttribute('aria-disabled', 'true')
@@ -1356,7 +1362,7 @@ export function mountChatPanel(
 
   // ---- Actions ------------------------------------------------------------
   function loadModel(): void {
-    if (MODELS[MODEL_ID]?.comingSoon) return // not loadable (blocked upstream)
+    if (!isLoadable(MODELS[MODEL_ID])) return // gated — see model-availability
     isLoading = true
     loadWatchdog.arm()
     renderModelState()

@@ -16,6 +16,7 @@ import type {
   InternalStatusResponse,
   InternalDivinciAuthStatusResponse,
 } from '@/shared/messages'
+import { isLoadable } from '@/shared/model-availability'
 import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_LOADING, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId, type LoadingMirror } from '@/shared/models'
 import {
   STORAGE_KEY_ORIGIN_GRANTS,
@@ -224,7 +225,7 @@ function renderCards(loadedIds: ModelId[], activeId: ModelId | null, loadingId: 
     if (!btn) return
     // Coming-soon models (e.g. LFM2.5, blocked on upstream kernels) aren't
     // loadable — show a disabled "Coming soon" button and nothing else.
-    const comingSoon = MODELS[id]?.comingSoon
+    const comingSoon = !isLoadable(MODELS[id])
     card.classList.toggle('is-coming-soon', !!comingSoon)
     if (comingSoon) {
       if (unloadBtn) unloadBtn.hidden = true
