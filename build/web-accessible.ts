@@ -35,14 +35,21 @@ export const WEB_ACCESSIBLE_RESOURCES = [
   // ORT wasm binaries, fetched by onnxruntime-web from inside the iframe.
   // NOT `assets/*` — that also exposed the popup stylesheet.
   //
-  // BOTH locations, because ORT can resolve its binaries two ways and which
-  // one wins is a runtime decision:
-  //   assets/ — the URL Vite rewrites into ORT's own ESM bundle.
-  //   ort/    — what `wasmPaths` points at. chat-host.ts sets that at MODULE
-  //             top level, and entrypoints/inference/main.ts imports
-  //             chat-host, so the framed iframe runs the assignment too.
-  // Exposing only `assets/` left the iframe aimed at a directory it could not
-  // read; `unmatchedRuntimeAssets` below is what surfaced that.
+  // `ort/` is the live one. chat-host.ts sets `wasmPaths = getURL('ort/')` at
+  // MODULE top level and entrypoints/inference/main.ts imports chat-host, so
+  // the framed iframe runs that assignment too — and a string `wasmPaths`
+  // makes ORT prefix it onto every binary it loads. Exposing only `assets/`
+  // left the iframe aimed at a directory it could not read;
+  // `unmatchedRuntimeAssets` below is what surfaced that.
+  //
+  // `assets/` is a bundler artifact, NOT a second live path. ORT's own ESM
+  // bundle carries `new URL('...wasm', import.meta.url)`, so Vite emits and
+  // rewrites the binary whether or not anything fetches it — and nothing
+  // does: every reference sits behind `!wasmPaths && …`, and wasmPaths is
+  // always set. It stays listed only because the literal survives in a
+  // reachable chunk, which the guard cannot tell apart from a live fetch.
+  // The two `assets/*.wasm` files are ~49 MB of the package. See
+  // notes/ort-binaries.md before trying to remove them.
   'assets/ort-wasm-*.wasm',
   'ort/ort-wasm-*.mjs',
   'ort/ort-wasm-*.wasm',
