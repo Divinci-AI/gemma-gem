@@ -136,8 +136,16 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     //     repo's own template is used changes nothing.
     //   - A newer upstream repo: LiquidAI/LFM2.5-230M-ONNX's head sha IS the
     //     revision pinned above; it has not moved since 2026-06-24.
+    //   - The dtype: fp16 instead of q4 loads and hangs identically.
+    //   - The model size: every LiquidAI text ONNX from 230M to 2.6B declares
+    //     the SAME architecture (Lfm2ForCausalLM / model_type lfm2), so a larger
+    //     export exercises the same kernels. The only different architecture
+    //     they publish is lfm2_moe, and that is 8B — far past browser range.
+    //     (Enumerated all 174 LiquidAI repos: 16 are ONNX.)
+    //
     // So this is the lfm2 WebGPU kernels in transformers.js/ORT, not our
-    // packaging. Re-check when transformers.js publishes past 4.2.0.
+    // packaging, not our configuration, and not a stale pin. Re-check when
+    // transformers.js publishes past 4.2.0.
     comingSoon: true,
     version: 1,
   },
