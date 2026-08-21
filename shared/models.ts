@@ -127,6 +127,17 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     // was included at all and it still hung.
     // So do not re-enable this on the strength of a panel test — the dock is
     // the primary surface and it is the one that hangs.
+    //
+    // Also ruled out, same day — the hang survives all three:
+    //   - A DIFFERENT export: onnx-community/LFM2.5-350M-ONNX, which is tagged
+    //     `library_name: transformers.js` (ours is LiquidAI's own, untagged).
+    //     Loaded fine, hung identically.
+    //   - The chat template: removing the LFM2_CHATML_TEMPLATE override so the
+    //     repo's own template is used changes nothing.
+    //   - A newer upstream repo: LiquidAI/LFM2.5-230M-ONNX's head sha IS the
+    //     revision pinned above; it has not moved since 2026-06-24.
+    // So this is the lfm2 WebGPU kernels in transformers.js/ORT, not our
+    // packaging. Re-check when transformers.js publishes past 4.2.0.
     comingSoon: true,
     version: 1,
   },

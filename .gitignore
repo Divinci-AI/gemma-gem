@@ -31,3 +31,4 @@ test-results/
 
 # Persistent Chromium profile holding the cached model weights (~3 GB)
 .playwright-hero-profile
+store-assets/demo/frames/
