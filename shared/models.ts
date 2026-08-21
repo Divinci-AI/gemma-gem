@@ -112,8 +112,21 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     dtype: 'q4',
     contextLimit: 32_768,
     chatTemplate: LFM2_CHATML_TEMPLATE,
-    // Blocked on upstream lfm2 WebGPU kernels — generation hangs the runtime on
-    // real prompts. Shown as "Coming soon", not loadable, until upstream lands.
+    // Blocked on upstream lfm2 WebGPU kernels. Shown as "Coming soon", not
+    // loadable, until upstream lands.
+    //
+    // Re-tested 2026-08-20 against @huggingface/transformers 4.2.0 (still the
+    // LATEST published release — there is no newer version to upgrade to) at
+    // the pinned revision above. Narrowed since the original note:
+    //   - Side panel, bare user prompt: LOADS in ~23s and generates in ~2s.
+    //     This is why it can look like it works.
+    //   - In-page dock: HANGS. A "…" bubble, Stop active, no output and no
+    //     error after 150s.
+    // The trigger is the SYSTEM-role message, not prompt length: the probe ran
+    // on localhost, which urlIndexDecision treats as sensitive, so no page text
+    // was included at all and it still hung.
+    // So do not re-enable this on the strength of a panel test — the dock is
+    // the primary surface and it is the one that hangs.
     comingSoon: true,
     version: 1,
   },
