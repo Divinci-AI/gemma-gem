@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
   WEB_ACCESSIBLE_RESOURCES,
   unmatchedWebAccessibleChunks,
+  unmatchedRuntimeAssets,
 } from './build/web-accessible'
 import { findStagingLeaks } from './build/no-staging-leak'
 
@@ -250,6 +251,26 @@ export default defineConfig({
             'load, so they would render blank:\n' +
             missing.map((m) => `  - ${m}`).join('\n') +
             '\nAdd a matching pattern in build/web-accessible.ts.',
+        )
+      }
+
+      // The walk above follows imports, so it sees every .js the iframe loads
+      // and nothing else. A .wasm fetched from a string is invisible to it —
+      // and that blind spot is why the iframe pointed ORT at an unreadable
+      // directory for months without a single build complaining.
+      const runtime = unmatchedRuntimeAssets(
+        wxt.config.outDir,
+        { existsSync, readFileSync, readdirSync },
+        (...parts: string[]) => parts.join('/'),
+      )
+      if (runtime.length > 0) {
+        throw new Error(
+          'A framed iframe fetches paths at runtime that the manifest does ' +
+            'not cover, so the fetch is blocked with no error attributable ' +
+            'to the manifest:\n' +
+            runtime.map((r) => `  - ${r.path} (${r.reason}, from ${r.chunk})`).join('\n') +
+            '\nEither expose it in build/web-accessible.ts, or stop the framed ' +
+            'entrypoint from reaching the code that fetches it.',
         )
       }
 

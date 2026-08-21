@@ -34,7 +34,18 @@ export const WEB_ACCESSIBLE_RESOURCES = [
   'chunks/_virtual_wxt-html-plugins-*.js',
   // ORT wasm binaries, fetched by onnxruntime-web from inside the iframe.
   // NOT `assets/*` — that also exposed the popup stylesheet.
+  //
+  // BOTH locations, because ORT can resolve its binaries two ways and which
+  // one wins is a runtime decision:
+  //   assets/ — the URL Vite rewrites into ORT's own ESM bundle.
+  //   ort/    — what `wasmPaths` points at. chat-host.ts sets that at MODULE
+  //             top level, and entrypoints/inference/main.ts imports
+  //             chat-host, so the framed iframe runs the assignment too.
+  // Exposing only `assets/` left the iframe aimed at a directory it could not
+  // read; `unmatchedRuntimeAssets` below is what surfaced that.
   'assets/ort-wasm-*.wasm',
+  'ort/ort-wasm-*.mjs',
+  'ort/ort-wasm-*.wasm',
 ]
 
 /** Pages framed from a web origin; the roots of the reachability walk. */
@@ -60,6 +71,18 @@ export function unmatchedWebAccessibleChunks(
   join: (...parts: string[]) => string,
   patterns: string[] = WEB_ACCESSIBLE_RESOURCES,
 ): string[] {
+  return [...reachableChunks(outDir, fs, join)].filter((f) => !isMatched(f, patterns)).sort()
+}
+
+/**
+ * The chunks the framed pages actually reach, as build-output paths.
+ * Shared by both guards below so they cannot disagree about reachability.
+ */
+export function reachableChunks(
+  outDir: string,
+  fs: { existsSync(p: string): boolean; readFileSync(p: string, enc: 'utf-8'): string },
+  join: (...parts: string[]) => string,
+): Set<string> {
   const reachable = new Set<string>()
   const stack: string[] = []
 
@@ -82,5 +105,109 @@ export function unmatchedWebAccessibleChunks(
     for (const m of src.matchAll(/["'](chunks\/[A-Za-z0-9_.-]+\.js)["']/g)) stack.push(m[1])
   }
 
-  return [...reachable].filter((f) => !isMatched(f, patterns)).sort()
+  return reachable
+}
+
+export interface RuntimeAssetProblem {
+  /** Extension-root-relative path the chunk will fetch. */
+  path: string
+  /** The reachable chunk that names it. */
+  chunk: string
+  reason: 'missing-from-build' | 'not-web-accessible'
+}
+
+/**
+ * Paths a reachable chunk fetches at RUN time rather than importing.
+ *
+ * `unmatchedWebAccessibleChunks` walks the import graph, so it sees every
+ * `.js` the iframe loads — and nothing else. A `.wasm` binary that
+ * onnxruntime-web fetches from a string, or an image resolved through
+ * `chrome.runtime.getURL`, is invisible to it. That blind spot is the one
+ * that cost the most time: the iframe loads, every chunk resolves, and then
+ * a fetch 404s with the failure surfacing as a stalled model load.
+ *
+ * Only the two forms whose target is UNAMBIGUOUS are extracted:
+ *
+ *   - `chrome.runtime.getURL("p")` — always extension-root relative.
+ *   - a root-relative literal (`"/assets/x.wasm"`), including as the first
+ *     argument of `new URL(...)`, which is how Vite emits an asset reference.
+ *
+ * A bare relative literal (`new URL("ort.bundle.min.mjs", self.location.href)`)
+ * is deliberately NOT extracted: its meaning depends on the fetching document's
+ * URL, which is not knowable from the build output, and guessing wrong would
+ * produce false failures on ORT's own internal strings. That is a real
+ * remaining gap, recorded here rather than papered over.
+ *
+ * A path ending in `/` is a directory (`getURL('ort/')` — the prefix ORT is
+ * handed as `wasmPaths`). Every file in it must be exposed, because which one
+ * gets fetched is a runtime decision about the host's capabilities.
+ */
+export function unmatchedRuntimeAssets(
+  outDir: string,
+  fs: {
+    existsSync(p: string): boolean
+    readFileSync(p: string, enc: 'utf-8'): string
+    readdirSync(p: string): string[]
+  },
+  join: (...parts: string[]) => string,
+  patterns: string[] = WEB_ACCESSIBLE_RESOURCES,
+): RuntimeAssetProblem[] {
+  /** Every file under `p`, extension-root-relative. `p` itself if it is a file. */
+  const filesUnder = (p: string): string[] => {
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(join(outDir, p))
+    } catch {
+      return [p] // not a directory
+    }
+    const base = p.endsWith('/') ? p : `${p}/`
+    return entries.flatMap((e) => filesUnder(`${base}${e}`))
+  }
+
+  const problems: RuntimeAssetProblem[] = []
+  const seen = new Set<string>()
+
+  for (const chunk of [...reachableChunks(outDir, fs, join)].sort()) {
+    const src = fs.readFileSync(join(outDir, chunk), 'utf-8')
+    const refs = new Set<string>()
+
+    // Our own deliberate runtime resolution. A directory is legitimate here —
+    // `getURL('ort/')` is the prefix ORT is handed as `wasmPaths`.
+    for (const m of src.matchAll(/getURL\(\s*["']([^"']*)["']/g)) refs.add(m[1])
+
+    // A root-relative literal naming a FILE. The extension is required on
+    // purpose: a bare directory literal in this form is almost always a
+    // library default that nothing fetches (transformers.js ships
+    // `localModelPath = '/models/'` and we run with allowLocalModels off),
+    // and a guard that reports those teaches people to ignore it.
+    for (const m of src.matchAll(
+      /["']\/?((?:assets|ort|models|icon)\/[^"']*\.[A-Za-z0-9]+)["']/g,
+    )) {
+      refs.add(m[1])
+    }
+
+    for (const ref of refs) {
+      if (ref === '') continue // `getURL('')` is the origin, not a file.
+
+      if (!fs.existsSync(join(outDir, ref))) {
+        const key = `${chunk}:${ref}`
+        if (!seen.has(key)) {
+          seen.add(key)
+          problems.push({ path: ref, chunk, reason: 'missing-from-build' })
+        }
+        continue
+      }
+
+      for (const target of filesUnder(ref)) {
+        const key = `${chunk}:${target}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        if (!isMatched(target, patterns)) {
+          problems.push({ path: target, chunk, reason: 'not-web-accessible' })
+        }
+      }
+    }
+  }
+
+  return problems
 }
