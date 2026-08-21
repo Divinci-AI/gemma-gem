@@ -47,6 +47,13 @@ runtimes share the asyncify binary already shipped — rather than copying jsep
 and adding another 26 MB. The wake models are tiny CPU graphs; the webgpu
 bundle still carries the wasm CPU EP. **Not yet verified end to end.**
 
+## `ort/` needs no web_accessible_resources entry
+
+Measured 2026-08-21: a framed extension page loads its own sub-resources —
+`fetch` and `<script src>` alike — with no manifest entry. The boundary is the
+web page. Exposing `ort/` (done briefly on 2026-08-21, then reverted) bought
+nothing. See `e2e/extension-web-accessible.spec.ts`.
+
 ## If `wasmPaths` were ever unset, we would fetch from a CDN
 
 transformers.js defaults it to

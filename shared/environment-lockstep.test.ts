@@ -137,10 +137,34 @@ describe('store-packaging guards', () => {
 })
 
 describe('web_accessible_resources exposure', () => {
-  it('does NOT expose the app-logic chunks to every origin', () => {
-    // These run in extension pages (offscreen document, side panel, popup),
-    // never inside an iframe framed from a web page, so no web origin needs to
-    // load them. The previous blanket `chunks/*.js` exposed all of them.
+  it('exposes the two documents the content script frames', () => {
+    expect(isMatched('robot.html')).toBe(true)
+    expect(isMatched('inference.html')).toBe(true)
+  })
+
+  it('exposes NOTHING those documents then load', () => {
+    // Measured 2026-08-21 (e2e project `web-accessible`): a framed extension
+    // page fetches and <script src>-loads its own sub-resources with no entry
+    // at all — the manifest boundary is the WEB PAGE. So an entry for a chunk,
+    // an asset or a wasm binary is surface bought for nothing. This list is
+    // what used to be exposed.
+    for (const path of [
+      'chunks/robot-BHnmG0c1.js',
+      'chunks/logo-robot-C9j7epgt.js',
+      'chunks/inference-PzrYkxW5.js',
+      'chunks/cache-breakdown-BRzTRB-q.js',
+      'chunks/models-CfdpKjct.js',
+      'chunks/logger-D_N_LeOO.js',
+      'chunks/preload-helper-BrnWUoxD.js',
+      'chunks/_virtual_wxt-html-plugins-Dwc3q2co.js',
+      'assets/ort-wasm-simd-threaded.jsep-CCdEhX4k.wasm',
+      'ort/ort-wasm-simd-threaded.asyncify.wasm',
+    ]) {
+      expect(isMatched(path), path).toBe(false)
+    }
+  })
+
+  it('exposes no extension-page chunk either', () => {
     for (const chunk of [
       'chunks/offscreen-BWEK10hF.js',
       'chunks/panel-D3-U-Zkb.js',
@@ -151,26 +175,9 @@ describe('web_accessible_resources exposure', () => {
     }
   })
 
-  it('exposes exactly what the two framed iframes need', () => {
-    for (const chunk of [
-      'chunks/robot-BHnmG0c1.js',
-      'chunks/logo-robot-C9j7epgt.js',
-      'chunks/inference-PzrYkxW5.js',
-      'chunks/cache-breakdown-BRzTRB-q.js',
-      'chunks/models-CfdpKjct.js',
-      'chunks/logger-D_N_LeOO.js',
-      'chunks/preload-helper-BrnWUoxD.js',
-      'chunks/_virtual_wxt-html-plugins-Dwc3q2co.js',
-      'assets/ort-wasm-simd-threaded.jsep-CCdEhX4k.wasm',
-    ]) {
-      expect(isMatched(chunk), chunk).toBe(true)
-    }
-  })
-
   it('no longer carries the blanket patterns', () => {
     expect(WEB_ACCESSIBLE_RESOURCES).not.toContain('chunks/*.js')
     expect(WEB_ACCESSIBLE_RESOURCES).not.toContain('assets/*')
-    // A stylesheet for an extension page is not iframe surface.
     expect(isMatched('assets/popup-C4SEDBGH.css')).toBe(false)
   })
 })

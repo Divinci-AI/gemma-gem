@@ -32,6 +32,12 @@ export default defineConfig({
       testMatch: /extension-open-api\.spec\.ts$/,
     },
     {
+      // Manifest question only: does web_accessible_resources gate a fetch()
+      // from a framed extension page? No model load.
+      name: 'web-accessible',
+      testMatch: /extension-web-accessible\.spec\.ts$/,
+    },
+    {
       name: 'full-inference',
       testMatch: /extension-inference\.spec\.ts$/,
       // Default: skipped. Opt in with RUN_REAL_INFERENCE=1.

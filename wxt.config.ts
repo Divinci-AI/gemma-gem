@@ -6,8 +6,8 @@ import { PROD_AUTH0_CLIENT_ID, PROD_AUTH0_CLIENT_ID_UNSET } from './shared/auth-
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
   WEB_ACCESSIBLE_RESOURCES,
-  unmatchedWebAccessibleChunks,
-  unmatchedRuntimeAssets,
+  unexposedPageContextRefs,
+  unnecessaryExposure,
 } from './build/web-accessible'
 import { findStagingLeaks } from './build/no-staging-leak'
 
@@ -115,7 +115,9 @@ if (mode !== 'development' && process.argv.includes('zip')) {
         'Restore all three together (see commit "LFM2.5 runs again"):\n' +
         "  1. vite resolve.alias: 'onnxruntime-web/webgpu' -> ORT's ort.all.bundle.min.mjs\n" +
         "  2. copy ort-wasm-simd-threaded{,.jsep}.{mjs,wasm} in copyOrtFiles()\n" +
-        "  3. expose 'ort/ort-wasm-*.{mjs,wasm}' in build/web-accessible.ts\n" +
+        '  3. …and NOT a web_accessible_resources entry: a framed extension\n' +
+        '     page loads its own wasm without one (measured — see the\n' +
+        '     `web-accessible` e2e project).\n' +
         '  …and re-verify a WebGPU model too — the alias changes which binaries\n' +
         '  the WebGPU path resolves, so it is not a wasm-only change.',
     )
@@ -240,37 +242,34 @@ export default defineConfig({
     // silent: the browser blocks the sub-resource and nothing is logged that
     // points at the manifest.
     'build:done': (wxt: { config: { outDir: string } }) => {
-      const missing = unmatchedWebAccessibleChunks(
-        wxt.config.outDir,
-        { existsSync, readFileSync },
-        (...parts: string[]) => parts.join('/'),
-      )
-      if (missing.length > 0) {
+      // What the PAGE loads is what the manifest governs — measured, see
+      // build/web-accessible.ts. Content scripts are the bridge, so their
+      // getURL() paths are the whole surface.
+      const fsApi = { existsSync, readFileSync, readdirSync }
+      const joinPath = (...parts: string[]) => parts.join('/')
+
+      const unexposed = unexposedPageContextRefs(wxt.config.outDir, fsApi, joinPath)
+      if (unexposed.length > 0) {
         throw new Error(
-          'web_accessible_resources does not cover chunks the framed iframes ' +
-            'load, so they would render blank:\n' +
-            missing.map((m) => `  - ${m}`).join('\n') +
-            '\nAdd a matching pattern in build/web-accessible.ts.',
+          'A content script hands the page a path the manifest does not ' +
+            'expose, so the page cannot load it — silently, with no error ' +
+            'attributable to the manifest:\n' +
+            unexposed.map((r) => `  - ${r.path} (from ${r.script})`).join('\n') +
+            '\nAdd it to WEB_ACCESSIBLE_RESOURCES in build/web-accessible.ts.',
         )
       }
 
-      // The walk above follows imports, so it sees every .js the iframe loads
-      // and nothing else. A .wasm fetched from a string is invisible to it —
-      // and that blind spot is why the iframe pointed ORT at an unreadable
-      // directory for months without a single build complaining.
-      const runtime = unmatchedRuntimeAssets(
-        wxt.config.outDir,
-        { existsSync, readFileSync, readdirSync },
-        (...parts: string[]) => parts.join('/'),
-      )
-      if (runtime.length > 0) {
+      const surplus = unnecessaryExposure(wxt.config.outDir, fsApi, joinPath)
+      if (surplus.length > 0) {
         throw new Error(
-          'A framed iframe fetches paths at runtime that the manifest does ' +
-            'not cover, so the fetch is blocked with no error attributable ' +
-            'to the manifest:\n' +
-            runtime.map((r) => `  - ${r.path} (${r.reason}, from ${r.chunk})`).join('\n') +
-            '\nEither expose it in build/web-accessible.ts, or stop the framed ' +
-            'entrypoint from reaching the code that fetches it.',
+          'web_accessible_resources exposes patterns to <all_urls> that no ' +
+            'page-context path needs:\n' +
+            surplus.map((p) => `  - ${p}`).join('\n') +
+            '\nRemove them. A framed extension page loads its own ' +
+            'sub-resources without an entry (e2e project `web-accessible` ' +
+            'measures this), so entries for chunks or wasm are surface for ' +
+            'nothing. If a page-context caller was just added, this is ' +
+            'telling you the guard cannot see it.',
         )
       }
 
