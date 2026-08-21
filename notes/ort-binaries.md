@@ -33,7 +33,22 @@ Vite emits an asset for that unconditionally. Removing them means suppressing
 the *emission*, not deduplicating a copy. Five attempts at the adjacent
 "dedupe" framing were reverted; this reframing has not been tried.
 
-## Consequence: wake word cannot load
+## Fixed 2026-08-21
+
+`offscreen/wake-host.ts` now imports `onnxruntime-web/webgpu`, so both
+consumers share the asyncify binary. Two consequences:
+
+- The build inlines ONE ORT runtime instead of two, and Vite stops emitting
+  `assets/…jsep-<hash>.wasm` because nothing references it. **The package went
+  from 78.89 MB to 52.39 MB** — a 26.5 MB drop from a one-line import change.
+- `build/ort-binaries.ts` reads each inlined bundle's required filenames out of
+  ORT's own dist and fails the build if `ort/` lacks them, so an ORT upgrade
+  that renames a binary is a build error rather than a runtime 404.
+
+Wake word has NOT been exercised end to end since the change — it needs a
+microphone. What is verified is that the binary it asks for now ships.
+
+## The original defect: wake word could not load
 
 `ort.bundle.min.mjs` asks for `/ort/ort-wasm-simd-threaded.jsep.mjs`, which is
 not in the package. `configureOrt()`'s comment — "The only wasm variant bundled

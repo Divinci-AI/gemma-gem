@@ -9,7 +9,14 @@
  * `hey_divinci`. ort runs on the WASM backend (asyncify wasm already in /ort/,
  * copied from onnxruntime-web by wxt.config) to avoid WebGPU contention with Gemma.
  */
-import * as ort from "onnxruntime-web";
+// `onnxruntime-web/webgpu`, NOT the default export. The default resolves to
+// ort.bundle.min.mjs, which asks for ort-wasm-simd-threaded.jsep.{mjs,wasm} —
+// files copyOrtFiles() has never put in public/ort/, so every wake-word start
+// 404'd on its runtime. The /webgpu entry asks for the asyncify binary the
+// rest of the extension already ships, so this costs zero bytes and shares one
+// wasm variant instead of adding a second 26 MB one. Wake models are tiny CPU
+// graphs; this build still carries the wasm CPU EP. See notes/ort-binaries.md.
+import * as ort from "onnxruntime-web/webgpu";
 import {
   WakeWordEngine,
   type WakeDetection,
@@ -50,8 +57,11 @@ let engine: WakeWordEngine | null = null;
 
 function configureOrt(): void {
   // The only wasm variant bundled is the simd-threaded asyncify build (/ort/),
-  // copied from onnxruntime-web at build time. Single-thread keeps it simple and
-  // avoids needing cross-origin-isolation headers in the offscreen doc.
+  // copied from onnxruntime-web at build time — which is why the import above
+  // must be the /webgpu entry. A string wasmPaths is used by ORT as a PREFIX,
+  // so it loads `${wasmPaths}${theFilenameThisBuildWants}`; get the build wrong
+  // and the prefix is fine and the filename 404s. Single-thread keeps it simple
+  // and avoids needing cross-origin-isolation headers in the offscreen doc.
   ort.env.wasm.wasmPaths = "/ort/";
   ort.env.wasm.numThreads = 1;
 }

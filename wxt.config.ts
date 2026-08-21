@@ -1,5 +1,5 @@
 import { defineConfig } from 'wxt'
-import { cpSync, mkdirSync } from 'node:fs'
+import { cpSync, mkdirSync, rmSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { PROD_AUTH0_CLIENT_ID, PROD_AUTH0_CLIENT_ID_UNSET } from './shared/auth-config'
@@ -10,6 +10,7 @@ import {
   unnecessaryExposure,
 } from './build/web-accessible'
 import { findStagingLeaks } from './build/no-staging-leak'
+import { missingOrtBinaries, ortRequirements } from './build/ort-binaries'
 
 function copyOrtFiles() {
   const require = createRequire(import.meta.url)
@@ -30,6 +31,17 @@ function copyOrtFiles() {
 
   for (const file of files) {
     cpSync(resolve(ortDist, file), resolve(destDir, file), { force: true })
+  }
+
+  // Drop anything this list no longer names. public/ort is TRACKED, so a
+  // removed entry would otherwise linger on disk and keep the build working
+  // here while failing on a clean checkout — and it would hide the
+  // missingOrtBinaries guard, which can only see what is actually shipped.
+  // Pruning turns that into a visible git deletion instead.
+  for (const stale of readdirSync(destDir)) {
+    if (stale.startsWith('ort-wasm-') && !files.includes(stale)) {
+      rmSync(resolve(destDir, stale), { force: true })
+    }
   }
 }
 
@@ -256,6 +268,29 @@ export default defineConfig({
             'attributable to the manifest:\n' +
             unexposed.map((r) => `  - ${r.path} (from ${r.script})`).join('\n') +
             '\nAdd it to WEB_ACCESSIBLE_RESOURCES in build/web-accessible.ts.',
+        )
+      }
+
+      // Every ORT build we inline must find its binaries in ort/. See
+      // build/ort-binaries.ts — this is a 404 with no attributable error.
+      const ortDist = resolve(dirname(createRequire(import.meta.url).resolve('onnxruntime-web')))
+      const missingOrt = missingOrtBinaries(wxt.config.outDir, ortDist, fsApi, joinPath)
+      if (missingOrt.length > 0) {
+        throw new Error(
+          'A bundled ONNX Runtime build asks for wasm binaries that are not ' +
+            'in ort/, so it will 404 at runtime:\n' +
+            missingOrt
+              .map((m) => `  - ${m.file} (${m.bundle}, inlined by ${m.usedBy.join(', ')})`)
+              .join('\n') +
+            '\nEither copy it in copyOrtFiles(), or change the import so this ' +
+            'code uses the ORT build whose binaries are already shipped — ' +
+            'each variant is ~24 MB, so sharing one is usually right.\n' +
+            'Currently required: ' +
+            JSON.stringify(
+              ortRequirements(wxt.config.outDir, ortDist, fsApi, joinPath).map((r) => ({
+                [r.bundle]: r.requires,
+              })),
+            ),
         )
       }
 
