@@ -19,8 +19,24 @@ function copyOrtFiles() {
   mkdirSync(destDir, { recursive: true })
 
   const files = [
+    // WebGPU (JSEP/asyncify) path.
     'ort-wasm-simd-threaded.asyncify.mjs',
     'ort-wasm-simd-threaded.asyncify.wasm',
+    // WASM execution provider, for models pinned to device:'wasm'.
+    //
+    // ⚠️ ORT resolves BOTH of these relative to `wasmPaths`, and it reaches for
+    // the jsep build even when the requested backend is plain wasm. Ship only
+    // the plain pair and initialisation fails with
+    //   "no available backend found. ERR: [wasm] Failed to fetch dynamically
+    //    imported module: .../ort-wasm-simd-threaded.jsep.mjs"
+    // …which in the extension surfaces as a load that never finishes and never
+    // errors, because the CDN fallback baked into transformers.js is blocked by
+    // our CSP. Measured 2026-08-21: with all four present, LFM2.5 loads in ~30s
+    // and generates a 58-token prompt in ~7s.
+    'ort-wasm-simd-threaded.mjs',
+    'ort-wasm-simd-threaded.wasm',
+    'ort-wasm-simd-threaded.jsep.mjs',
+    'ort-wasm-simd-threaded.jsep.wasm',
   ]
 
   for (const file of files) {
@@ -29,6 +45,13 @@ function copyOrtFiles() {
 }
 
 copyOrtFiles()
+
+/** Absolute path to ORT's all-backends ESM bundle (see the alias below). */
+const ORT_ALL_BUNDLE = (() => {
+  const require = createRequire(import.meta.url)
+  const ortDist = resolve(dirname(require.resolve('onnxruntime-web')))
+  return resolve(ortDist, 'ort.all.bundle.min.mjs')
+})()
 
 const ALLOWED_MODES = new Set(['development', 'production'])
 const modeIndex = process.argv.indexOf('--mode')
@@ -238,6 +261,19 @@ export default defineConfig({
     },
   },
   vite: () => ({
+    resolve: {
+      alias: {
+        // transformers.js imports `onnxruntime-web/webgpu`, a build variant that
+        // registers the WebGPU/JSEP backend. A model pinned to device:'wasm'
+        // then finds no wasm backend registered and the load never settles.
+        // The `.all.` bundle registers every execution provider, so both
+        // device:'webgpu' and device:'wasm' resolve. Verified in an isolated
+        // page: with this bundle LFM2.5 loads in ~30s on wasm and answers a
+        // 58-token system+user prompt in ~7s — the exact prompt that hangs on
+        // the WebGPU path.
+        'onnxruntime-web/webgpu': ORT_ALL_BUNDLE,
+      },
+    },
     build: {
       target: 'esnext',
       // Ship neither source maps nor readable source in a production build:

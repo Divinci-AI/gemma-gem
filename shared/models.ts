@@ -33,6 +33,14 @@ export interface ModelConfig {
    * runtime entirely — see project_local_llm_worker_ortrun_buffer_bug.md).
    */
   dtype: 'q4' | 'q4f16' | 'q8' | 'fp16'
+  /**
+   * ONNX Runtime execution provider. Defaults to 'webgpu'.
+   *
+   * 'wasm' exists for architectures whose WebGPU kernels are incomplete in the
+   * bundled transformers.js — it runs on CPU, which for a small model is slower
+   * but correct, rather than hanging.
+   */
+  device?: 'webgpu' | 'wasm'
   contextLimit: number
   /**
    * Optional chat-template override. Some models ship a Jinja chat_template that
@@ -110,8 +118,15 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     shortLabel: 'LFM2.5',
     downloadSize: '~211 MB',
     dtype: 'q4',
+    device: 'wasm',
     contextLimit: 32_768,
     chatTemplate: LFM2_CHATML_TEMPLATE,
+    // WORKS in the side panel on the WASM execution provider (verified
+    // 2026-08-21: loads, then answers a system+user prompt in ~9.9s). Still
+    // gated because the in-page DOCK, which runs inference in the page-context
+    // iframe, loads but stalls before emitting tokens. Flip comingSoon off once
+    // that path is understood.
+    comingSoon: true,
     // Blocked on upstream lfm2 WebGPU kernels. Shown as "Coming soon", not
     // loadable, until upstream lands.
     //
@@ -146,7 +161,6 @@ export const MODELS: Record<ModelId, ModelConfig> = {
     // So this is the lfm2 WebGPU kernels in transformers.js/ORT, not our
     // packaging, not our configuration, and not a stale pin. Re-check when
     // transformers.js publishes past 4.2.0.
-    comingSoon: true,
     version: 1,
   },
   // Kernel-complete small models (llama / qwen2 architectures) — these have

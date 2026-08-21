@@ -27,6 +27,13 @@ import { log } from '@/shared/logger'
 // Self-host the ONNX Runtime WASM files; copied at build time by wxt.config.
 if (env.backends.onnx?.wasm) {
   env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('ort/')
+  // Single-threaded WASM. The threaded build needs SharedArrayBuffer, which
+  // needs cross-origin isolation (COOP/COEP) — an extension page does not have
+  // it, so the threaded binary fails to initialise and the load hangs with no
+  // error. Only models pinned to device:'wasm' take this path; WebGPU models
+  // are unaffected.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ;(env.backends.onnx.wasm as any).numThreads = 1
 }
 
 // Persist downloaded model weights in the Cache API (extension-origin, disk-
@@ -208,7 +215,7 @@ export class ChatHost {
           revision: config.revision,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           dtype: config.dtype as any,
-          device: 'webgpu',
+          device: config.device ?? 'webgpu',
           progress_callback,
         }),
       ])
