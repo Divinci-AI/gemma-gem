@@ -81,6 +81,13 @@ type ChatState = {
   requestId: string
   aborted: boolean
   kimiAbort?: AbortController
+  /**
+   * Cancels the GENERATION. `aborted` alone only suppressed token emission —
+   * the comment above claimed a runChat short-circuit that did not exist, so
+   * an aborted chat still generated to max_new_tokens with nobody listening,
+   * holding the single GPU queue. ChatHost checks this signal before it starts.
+   */
+  genAbort: AbortController
 }
 const chats = new Map<string, ChatState>()
 function chatKey(caller: string, requestId: string): string {
@@ -146,6 +153,7 @@ async function handleLoad(req: InternalLoadRequest): Promise<void> {
         type: 'divinci:load-progress',
         requestId: req.requestId,
         modelId: req.modelId,
+        phase: info.phase,
         fraction: info.fraction,
         bytesLoaded: info.bytesLoaded,
         bytesTotal: info.bytesTotal,
@@ -198,7 +206,12 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
     )
   }
 
-  const state: ChatState = { caller: req.caller, requestId: req.requestId, aborted: false }
+  const state: ChatState = {
+    caller: req.caller,
+    requestId: req.requestId,
+    aborted: false,
+    genAbort: new AbortController(),
+  }
   const key = chatKey(req.caller, req.requestId)
 
   // Per-caller depth: count chats already in the system for THIS caller
@@ -236,6 +249,7 @@ async function handleChat(req: InternalChatRequest): Promise<void> {
         temperature: req.temperature ?? userSettings.temperature,
         topP: req.topP,
         tools: req.tools,
+        signal: state.genAbort.signal,
       },
       (delta) => {
         if (state.aborted) return
@@ -342,6 +356,9 @@ function handleAbort(req: InternalAbortRequest): void {
     if (state.caller !== req.caller) continue
     if (req.requestId !== '*' && state.requestId !== req.requestId) continue
     state.aborted = true
+    // Stop a generation that has not begun (queued, or still rendering its
+    // prompt). host.abort() below only reaches one that is already streaming.
+    state.genAbort.abort()
     abortedAny = true
     // Cancel an in-flight Kimi tool loop (CF + web-search fetches) if one is
     // running for this chat. The Gemma generation is interrupted separately

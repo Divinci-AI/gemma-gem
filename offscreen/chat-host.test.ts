@@ -27,12 +27,20 @@ interface FakeStopper {
 
 interface FakeModel {
   generate: (opts: {
-    streamer: { callback_function: (t: string) => void }
-    stopping_criteria: FakeStopper
+    streamer?: { callback_function: (t: string) => void }
+    stopping_criteria?: FakeStopper
     max_new_tokens?: number
   }) => Promise<unknown>
   dispose: () => Promise<void>
 }
+
+/** Every generate() the host issues, warm-up included. */
+let generateCalls: Array<{ maxNewTokens?: number; hadStreamer: boolean }> = []
+/** Prompt renders. Not free on a long conversation, so an aborted turn should
+ *  not pay for one. */
+let templateCalls = 0
+/** Make the next warm-up generate() throw, to prove a load survives it. */
+let warmUpShouldThrow = false
 
 let fakeModel: FakeModel
 let modelLoadCalled = 0
@@ -41,6 +49,13 @@ let stopperCreated = 0
 function makeFakeModel(): FakeModel {
   return {
     async generate(opts) {
+      generateCalls.push({ maxNewTokens: opts.max_new_tokens, hadStreamer: !!opts.streamer })
+      // The warm-up passes neither a streamer nor stopping criteria — it only
+      // needs the graph compiled, not the output.
+      if (!opts.streamer || !opts.stopping_criteria) {
+        if (warmUpShouldThrow) throw new Error('simulated warm-up failure')
+        return null
+      }
       // Emit tokens slowly so the test can race aborts mid-stream.
       const tokens = ['hello', ' world']
       for (const t of tokens) {
@@ -59,7 +74,10 @@ function makeFakeModel(): FakeModel {
 vi.mock('@huggingface/transformers', () => ({
   AutoTokenizer: {
     from_pretrained: vi.fn(async () => ({
-      apply_chat_template: vi.fn(() => ({ input_ids: [1, 2, 3], attention_mask: [1, 1, 1] })),
+      apply_chat_template: vi.fn(() => {
+        templateCalls += 1
+        return { input_ids: [1, 2, 3], attention_mask: [1, 1, 1] }
+      }),
       all_special_ids: [],
     })),
   },
@@ -90,6 +108,8 @@ describe('ChatHost queue', () => {
   beforeEach(() => {
     modelLoadCalled = 0
     stopperCreated = 0
+    generateCalls = []
+    warmUpShouldThrow = false
   })
 
   it('serializes two concurrent chats — second waits for first', async () => {
@@ -128,7 +148,7 @@ describe('ChatHost queue', () => {
       callIdx += 1
       if (callIdx === 1) throw new Error('first chat blew up')
       // Second call: emit normally.
-      opts.streamer.callback_function('ok')
+      opts.streamer!.callback_function('ok')
       return null
     })
 
@@ -148,8 +168,8 @@ describe('ChatHost queue', () => {
     // Make generate emit slowly so we have time to call abort mid-stream.
     vi.spyOn(fakeModel, 'generate').mockImplementation(async (opts) => {
       for (let i = 0; i < 20; i++) {
-        if (opts.stopping_criteria.interrupted) return null
-        opts.streamer.callback_function(`tok${i} `)
+        if (opts.stopping_criteria!.interrupted) return null
+        opts.streamer!.callback_function(`tok${i} `)
         await new Promise((r) => setTimeout(r, 5))
       }
       return null
@@ -367,5 +387,130 @@ describe('ChatHost single-model-resident (VRAM safety)', () => {
     expect(host.loadedModelIds()).toEqual([])
     expect(host.getActiveModelId()).toBeNull()
     expect(host.isLoaded()).toBe(false)
+  })
+})
+
+/**
+ * Measured on the shipped 0.14.8 build (2026-08-23, through the external port
+ * so no UI was involved): after `load-done`, the FIRST chat took 14,521 ms for
+ * Gemma 4 E2B and the second took 846 ms. The cost is GPU shader compilation
+ * on the first generate, and it scales with the model — SmolLM2 360M paid
+ * 1,719 ms. Users read the resulting silence as "it never responded".
+ */
+describe('ChatHost warm-up', () => {
+  beforeEach(() => {
+    modelLoadCalled = 0
+    stopperCreated = 0
+    generateCalls = []
+    warmUpShouldThrow = false
+  })
+
+  it('generates once before load() resolves', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    // If this is 0, `load-done` again promises a model that cannot answer.
+    expect(generateCalls).toHaveLength(1)
+    expect(generateCalls[0].maxNewTokens).toBe(1)
+  })
+
+  it('warms up with no streamer — the output is not wanted, the compile is', () => {
+    expect(generateCalls.every((c) => !c.hadStreamer || c.maxNewTokens !== 1)).toBe(true)
+  })
+
+  it('reports a `prepare` phase, with no fraction, once the bytes are in', async () => {
+    const host = new ChatHost()
+    const phases: Array<string | undefined> = []
+    let prepareFraction: number | null | undefined = 0
+    await host.load('gemma-4-e2b', (info) => {
+      phases.push(info.phase)
+      if (info.phase === 'prepare') prepareFraction = info.fraction
+    })
+    expect(phases).toContain('prepare')
+    // Shader compilation has no byte count. A fraction here would render as a
+    // progress bar that sits still for 14 s, which is worse than none.
+    expect(prepareFraction).toBeNull()
+  })
+
+  it('still loads when the warm-up fails', async () => {
+    // The warm-up is a latency optimisation. Failing the load because it threw
+    // would turn a slow first message into no product at all.
+    warmUpShouldThrow = true
+    const host = new ChatHost()
+    await expect(host.load('gemma-4-e2b')).resolves.toBeUndefined()
+    expect(host.isLoaded('gemma-4-e2b')).toBe(true)
+  })
+
+  it('does not warm up a load that was cancelled mid-flight', async () => {
+    const host = new ChatHost()
+    const loading = host.load('gemma-4-e2b')
+    await host.unload('gemma-4-e2b')
+    await loading
+    expect(generateCalls).toHaveLength(0)
+  })
+})
+
+describe('ChatHost abort before generation starts', () => {
+  beforeEach(() => {
+    generateCalls = []
+    warmUpShouldThrow = false
+  })
+
+  it('does not even render the prompt for a turn aborted while queued', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    const before = templateCalls
+    const ac = new AbortController()
+    ac.abort()
+    await host.chat(
+      { modelId: 'gemma-4-e2b', messages: [{ role: 'user', content: 'Hi' }], signal: ac.signal },
+      () => {},
+    )
+    // apply_chat_template walks the whole conversation; a stopped turn should
+    // not pay for it. Pins the check BEFORE the render, not just the one after.
+    expect(templateCalls).toBe(before)
+  })
+
+  it('never starts a generation that was aborted while queued', async () => {
+    // `state.aborted` alone only suppressed token EMISSION: the generation ran
+    // to max_new_tokens with nobody listening, holding the single GPU queue and
+    // every chat behind it. That is why Stop looked like it did nothing.
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    const warmUps = generateCalls.length
+
+    const ac = new AbortController()
+    ac.abort()
+    const result = await host.chat(
+      { modelId: 'gemma-4-e2b', messages: [{ role: 'user', content: 'Hi' }], signal: ac.signal },
+      () => {
+        throw new Error('no token should be produced')
+      },
+    )
+    expect(result.aborted).toBe(true)
+    expect(result.tokensGenerated).toBe(0)
+    expect(generateCalls).toHaveLength(warmUps)
+  })
+
+  it('runs normally when the signal is not aborted', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    const ac = new AbortController()
+    const seen: string[] = []
+    const result = await host.chat(
+      { modelId: 'gemma-4-e2b', messages: [{ role: 'user', content: 'Hi' }], signal: ac.signal },
+      (t) => seen.push(t),
+    )
+    expect(result.aborted).toBeUndefined()
+    expect(seen.join('')).toBe('hello world')
+  })
+
+  it('runs normally with no signal at all', async () => {
+    const host = new ChatHost()
+    await host.load('gemma-4-e2b')
+    const result = await host.chat(
+      { modelId: 'gemma-4-e2b', messages: [{ role: 'user', content: 'Hi' }] },
+      () => {},
+    )
+    expect(result.tokensGenerated).toBe(2)
   })
 })

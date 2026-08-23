@@ -56,7 +56,7 @@ import { contentHash } from '@/shared/content-hash'
 import { STORAGE_KEY_SITE_CONFIGS, resolveLocalized, type SiteReleaseConfig, type SiteConfigMap, type SiteThemeConfig } from '@/shared/release-config'
 import { PageWebMcpBridge, WEBMCP_BRIDGE_NS } from '@/shared/webmcp-consumer'
 import { detectDivinciEmbed } from '@/shared/divinci-embed-detect'
-import type { ChatTool, ChatToolCall } from '@/shared/messages'
+import type { ChatTool, ChatToolCall, LoadPhase } from '@/shared/messages'
 import { toggleMcpId, releaseEditAction, forkTitleFor } from '@/shared/mcp-release'
 import { LocalInference, type LocalTransport } from '@/chat-core/local-inference'
 import { ChatController } from '@/chat-core/chat-controller'
@@ -322,6 +322,9 @@ export function mountChatPanel(
   // the "Loading from cache" vs "Downloading model" progress label.
   let loadFromCache = false
   let streamingBubble: HTMLElement | null = null
+  // True while the model is resident but still compiling GPU shaders. Kept
+  // separate from isLoading so the copy can say what is actually happening.
+  let preparing = false
   let pollTimer: number | null = null
   let disposed = false
   let pageStatus: InternalPageCheckResponse['status'] | null = null
@@ -1265,7 +1268,8 @@ export function mountChatPanel(
       // The status response carries the cache breakdown; if our model's weights
       // are already on disk, a load in progress is a cache read, not a download.
       loadFromCache = status.cacheBreakdown?.[MODEL_ID]?.isCached ?? false
-      renderProgress(bytesLoaded, bytesTotal, loadFromCache)
+      preparing = status.loadProgress.phase === 'prepare'
+      renderProgress(bytesLoaded, bytesTotal, loadFromCache, status.loadProgress.phase ?? 'download')
     }
     renderModelState()
     void maybeAutoLoadModel(status)
@@ -1322,12 +1326,14 @@ export function mountChatPanel(
         isLoading = true
         loadWatchdog.arm()
         if (typeof ev.fromCache === 'boolean') loadFromCache = ev.fromCache
-        renderProgress(ev.bytesLoaded, ev.bytesTotal, loadFromCache)
+        preparing = ev.phase === 'prepare'
+        renderProgress(ev.bytesLoaded, ev.bytesTotal, loadFromCache, ev.phase ?? 'download')
         renderModelState()
         return
       case 'divinci:load-done':
         loadWatchdog.disarm()
         isLoading = false
+        preparing = false
         isLoaded = true
         renderModelState()
         return
@@ -2399,8 +2405,24 @@ export function mountChatPanel(
     bubble.innerHTML = renderMarkdown(text)
   }
 
-  function renderProgress(loaded: number, total: number | null, fromCache = false): void {
+  function renderProgress(
+    loaded: number,
+    total: number | null,
+    fromCache = false,
+    phase: LoadPhase = 'download',
+  ): void {
     el.progress.hidden = false
+    // The weights are in; what's left is compiling GPU shaders. There is no
+    // byte count for that, so show an indeterminate bar and SAY what is
+    // happening — this step is ~14 s for Gemma 4 E2B, and silence through it
+    // is what read as "the model never responded".
+    if (phase === 'prepare') {
+      el.progressFill.style.width = '100%'
+      el.progressFill.dataset.indeterminate = '1'
+      el.progressText.textContent = `Preparing ${MODELS[MODEL_ID].shortLabel} — first run compiles GPU shaders…`
+      return
+    }
+    delete el.progressFill.dataset.indeterminate
     const pct = total ? Math.min(100, Math.round((loaded / total) * 100)) : null
     el.progressFill.style.width = pct != null ? `${pct}%` : '15%'
     // "Loading from cache" when the weights are already on disk (e.g. after a
@@ -2427,9 +2449,9 @@ export function mountChatPanel(
       el.statusDot.title = 'Loading model…'
       el.loadCard.hidden = false
       el.loadBtn.disabled = true
-      el.loadBtn.textContent = 'Loading…'
+      el.loadBtn.textContent = preparing ? 'Preparing…' : 'Loading…'
       el.input.disabled = true
-      el.input.placeholder = 'Model loading…'
+      el.input.placeholder = preparing ? 'Preparing the model…' : 'Model loading…'
     } else {
       el.statusDot.dataset.state = 'idle'
       el.statusDot.title = 'No model loaded'
@@ -3752,6 +3774,26 @@ export const SIDEBAR_CSS = /* css */ `
     background: var(--dls-accent);
     transition: width 0.2s ease;
   }
+  /* Shader compilation has no byte count, so the bar sweeps instead of
+     filling — a static 100% would read as "done" during the one step where
+     the user most needs to know something is still happening. */
+  .dls-progress-fill[data-indeterminate] {
+    transition: none;
+    background: linear-gradient(
+      90deg,
+      var(--dls-bg-2) 0%, var(--dls-accent) 50%, var(--dls-bg-2) 100%
+    );
+    background-size: 200% 100%;
+    animation: dls-progress-sweep 1.2s linear infinite;
+  }
+  @keyframes dls-progress-sweep {
+    from { background-position: 200% 0; }
+    to { background-position: 0 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .dls-progress-fill[data-indeterminate] { animation: none; background: var(--dls-accent); }
+  }
+
   .dls-progress-text { margin: 6px 0 0; font-size: 11px; color: var(--dls-muted); font-variant-numeric: tabular-nums; }
 
   .dls-messages {

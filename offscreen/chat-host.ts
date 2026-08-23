@@ -21,7 +21,7 @@ import {
   env,
 } from '@huggingface/transformers'
 import { MODELS, type ModelId } from '@/shared/models'
-import type { ChatTool } from '@/shared/messages'
+import type { ChatTool, LoadPhase } from '@/shared/messages'
 import { log } from '@/shared/logger'
 
 // Self-host the ONNX Runtime WASM files; copied at build time by wxt.config.
@@ -45,6 +45,7 @@ export type LoadProgressFn = (info: {
   bytesLoaded: number
   bytesTotal: number | null
   currentFile?: string
+  phase?: LoadPhase
 }) => void
 
 export interface ChatOptions {
@@ -54,6 +55,17 @@ export interface ChatOptions {
   maxNewTokens?: number
   temperature?: number
   topP?: number
+  /**
+   * Cancels the turn. Checked immediately before generation starts, which is
+   * the window a `StoppingCriteria` cannot cover: it is only consulted BETWEEN
+   * generated tokens, so an abort arriving before the first one had nothing to
+   * interrupt and the generation ran to max_new_tokens regardless.
+   *
+   * That is not a corner case — the chat queue is serial, so a chat aborted
+   * while QUEUED used to wait its turn and then generate a full answer nobody
+   * would ever see, holding the GPU and every chat behind it.
+   */
+  signal?: AbortSignal
   /**
    * Optional tool descriptors. Passed to apply_chat_template; templates
    * that don't reference `tools` (most non-instruct models) silently
@@ -187,6 +199,7 @@ export class ChatHost {
         if (typeof p.total === 'number') totalExpected = p.total
         lastFile = p.file
         const snapshot = {
+          phase: 'download' as const,
           fraction:
             typeof p.progress === 'number' && Number.isFinite(p.progress) ? p.progress / 100 : null,
           bytesLoaded: totalLoaded,
@@ -226,11 +239,82 @@ export class ChatHost {
       this.loaded.set(modelId, { model, tokenizer })
       this.activeModelId = modelId // newly loaded becomes the active target
       log.info(`Loaded ${modelId} (${this.loaded.size} resident)`)
+
+      // Resident is NOT ready. See warmUp().
+      await this.warmUp(modelId, onProgress)
     } finally {
       // Clear the download bar regardless of success/failure/supersession.
       // Bug 1 fix: previously this only ran on success, so a failed load
       // left the popup showing a frozen "75% downloading…" forever.
       this.latestProgress = null
+    }
+  }
+
+  /**
+   * Force the first generation while the UI still says "loading".
+   *
+   * `loaded.set()` means the weights are resident. It does NOT mean the model
+   * can answer: the first `generate()` compiles GPU shaders for the whole
+   * graph, and that cost scales with the model. Measured against the shipped
+   * 0.14.8 build on 2026-08-23, through the external port so no UI was
+   * involved:
+   *
+   *   SmolLM2 360M   first chat 1,719 ms   second chat  —
+   *   Gemma 4 E2B    first chat 14,521 ms  second chat 846 ms
+   *
+   * Without this, `load-done` fires, the panel turns green, the user types
+   * "Hi", and the extension sits on a `…` placeholder for fourteen seconds
+   * with no progress and no explanation. That is the "it never responded"
+   * report, and it is also why Stop appeared broken: nothing had started, so
+   * there was nothing for the stopping criteria to interrupt.
+   *
+   * Doing it here moves the cost inside the load the user already chose to
+   * wait for, and makes the green dot mean what it says.
+   *
+   * Failure is logged, not thrown. The warm-up is a latency optimisation; if
+   * it breaks, the model is still loaded and a real chat will surface any real
+   * error with its own diagnostics. Failing the load because a warm-up failed
+   * would turn a slow first message into no product at all.
+   */
+  private async warmUp(modelId: ModelId, onProgress?: LoadProgressFn): Promise<void> {
+    // `unload()` deletes from `loaded`, so this covers cancellation too.
+    const entry = this.loaded.get(modelId)
+    if (!entry) return
+
+    // No byte count exists for shader compilation — it is compute, not
+    // transfer. `fraction: null` tells the UI to render this indeterminate
+    // rather than inventing a percentage that would sit still.
+    const snapshot = {
+      phase: 'prepare' as const,
+      fraction: null,
+      bytesLoaded: 0,
+      bytesTotal: null,
+    }
+    this.latestProgress = snapshot
+    onProgress?.(snapshot)
+
+    const started = Date.now()
+    try {
+      const templateOverride = MODELS[modelId]?.chatTemplate
+      const inputs = entry.tokenizer.apply_chat_template([{ role: 'user', content: 'Hi' }], {
+        add_generation_prompt: true,
+        tokenize: true,
+        return_tensor: true,
+        return_dict: true,
+        ...(templateOverride ? { chat_template: templateOverride } : {}),
+      })
+      // One token is enough: the compile happens on the way to the first one.
+      // Deliberately NOT routed through runChat() — that path treats a
+      // zero-token result as a real failure, which for a 1-token warm-up is a
+      // plausible and meaningless outcome.
+      await entry.model.generate({ ...inputs, max_new_tokens: 1, do_sample: false })
+      log.info(`Warm-up for ${modelId} took ${Date.now() - started}ms`)
+    } catch (e) {
+      log.warn(
+        `Warm-up for ${modelId} failed after ${Date.now() - started}ms; ` +
+          `the first chat will pay the compile instead`,
+        e,
+      )
     }
   }
 
@@ -264,6 +348,8 @@ export class ChatHost {
     fullText: string
     tokensGenerated: number
     durationMs: number
+    /** True when the turn was cancelled before generation began. */
+    aborted?: boolean
   }> {
     const targetId = opts.modelId ?? this.activeModelId
     if (!targetId || !this.loaded.has(targetId)) {
@@ -289,11 +375,22 @@ export class ChatHost {
     fullText: string
     tokensGenerated: number
     durationMs: number
+    aborted?: boolean
   }> {
     const entry = this.loaded.get(modelId)
     if (!entry) throw new Error(`Model ${modelId} not loaded`)
     const { model, tokenizer } = entry
     const start = Date.now()
+    const abandoned = (): { fullText: string; tokensGenerated: number; durationMs: number; aborted: true } => ({
+      fullText: '',
+      tokensGenerated: 0,
+      durationMs: Date.now() - start,
+      aborted: true,
+    })
+    // Aborted while queued — never start. The serial queue means this chat may
+    // have waited minutes for its turn; without this it would generate a full
+    // answer for a caller that stopped listening, and hold every chat behind it.
+    if (opts.signal?.aborted) return abandoned()
     let tokensGenerated = 0
     let fullText = ''
 

@@ -72,7 +72,7 @@ function emit(event: DivinciExternalEvent): void {
 }
 
 /** Chats currently tracked, keyed by requestId, so abort can flag the right one. */
-const chats = new Map<string, { aborted: boolean }>()
+const chats = new Map<string, { aborted: boolean; genAbort: AbortController }>()
 
 async function handleLoad(req: IncomingReq): Promise<void> {
   const requestId = req.requestId ?? ''
@@ -84,6 +84,7 @@ async function handleLoad(req: IncomingReq): Promise<void> {
         type: 'divinci:load-progress',
         requestId,
         modelId,
+        phase: info.phase,
         fraction: info.fraction,
         bytesLoaded: info.bytesLoaded,
         bytesTotal: info.bytesTotal,
@@ -109,7 +110,7 @@ async function handleChat(req: IncomingReq): Promise<void> {
     })
     return
   }
-  const state = { aborted: false }
+  const state = { aborted: false, genAbort: new AbortController() }
   chats.set(requestId, state)
   try {
     const result = await host.chat(
@@ -120,6 +121,9 @@ async function handleChat(req: IncomingReq): Promise<void> {
         temperature: req.temperature ?? userSettings.temperature,
         topP: req.topP,
         tools: req.tools as Parameters<ChatHost['chat']>[0]['tools'],
+        // Cancels a generation that has not started yet; host.abort() only
+        // reaches one already streaming. See ChatState in offscreen/main.ts.
+        signal: state.genAbort.signal,
       },
       (delta) => {
         if (state.aborted) return
@@ -147,6 +151,7 @@ function handleAbort(req: IncomingReq): void {
   for (const [id, state] of chats) {
     if (req.requestId !== '*' && id !== req.requestId) continue
     state.aborted = true
+    state.genAbort.abort()
     any = true
   }
   if (any) host.abort()

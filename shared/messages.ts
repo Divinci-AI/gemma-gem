@@ -104,6 +104,19 @@ export type DivinciExternalRequest =
   | DivinciExternalChatRequest
   | DivinciExternalAbortRequest
 
+/**
+ * Which stage of a load the progress belongs to.
+ *
+ * `download` — fetching / reading weights. Byte-denominated, so a percentage
+ *   is meaningful.
+ * `prepare`  — the model is resident but not yet able to generate. The first
+ *   generate compiles GPU shaders for the graph, which costs 1.7 s for a 360M
+ *   model and 14.5 s for Gemma 4 E2B (measured on the shipped 0.14.8 build,
+ *   2026-08-23). There is no byte count for it — it is compute, not transfer,
+ *   so `fraction` is null and the UI must render it indeterminate.
+ */
+export type LoadPhase = 'download' | 'prepare'
+
 // ---- Events sent back over the same port ----
 
 export interface DivinciExternalLoadProgressEvent {
@@ -115,6 +128,8 @@ export interface DivinciExternalLoadProgressEvent {
   bytesLoaded: number
   bytesTotal: number | null
   currentFile?: string
+  /** Which stage this progress belongs to. Absent means `download`. */
+  phase?: LoadPhase
   /**
    * True when the model's weights are already in the Cache API, so this load
    * is reading from disk (no network). Lets the UI say "Loading from cache"
@@ -258,6 +273,7 @@ export interface InternalStatusResponse {
   queueDepth: number
   /** Currently downloading file path + bytes (when not idle), for the popup. */
   loadProgress: {
+    phase?: LoadPhase
     fraction: number | null
     bytesLoaded: number
     bytesTotal: number | null
