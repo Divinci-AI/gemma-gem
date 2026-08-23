@@ -18,7 +18,8 @@
  * "Another generation is in progress".
  */
 
-import { ALLOWED_WEB_APP_ORIGINS, MODELS } from '@/shared/models'
+import { ALLOWED_WEB_APP_ORIGINS, MODELS, type ModelId } from '@/shared/models'
+import { isLoadable } from '@/shared/model-availability'
 import { log } from '@/shared/logger'
 import { forwardRequest, postToPort } from './port-router'
 import type {
@@ -58,7 +59,10 @@ export function setupExternalBridge(): void {
       sendResponse({
         type: 'divinci:pong',
         extensionVersion: manifest.version,
-        supportedModels: Object.keys(MODELS),
+        // Loadable only. `Object.keys(MODELS)` advertised LFM2.5, which is
+        // gated behind `comingSoon` and throws on load — so the web app's
+        // picker offered a model the extension cannot serve.
+        supportedModels: (Object.keys(MODELS) as ModelId[]).filter((id) => isLoadable(MODELS[id])),
       })
       return true
     }

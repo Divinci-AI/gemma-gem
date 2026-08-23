@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import {
+  isResident,
   isLoadable,
   modelMenuStatus,
   shouldAdoptRememberedModel,
@@ -116,5 +117,42 @@ describe('the gate is enforced through the shared helpers, not inline', () => {
     const code = codeOnly(popup)
     expect(code).toContain('isLoadable(')
     expect(code, 'popup should not test comingSoon inline').not.toMatch(/\.comingSoon/)
+  })
+})
+
+describe('isResident — the panel/popup disagreement', () => {
+  it('is true for a loaded model that is NOT the active target', () => {
+    // ChatHost.chat() takes an explicit modelId and serves any resident model,
+    // so a non-active resident model can answer. Gating on the active target
+    // refused to send for a model that would have worked.
+    expect(isResident('qwen2.5-0.5b', ['gemma-4-e2b', 'qwen2.5-0.5b'])).toBe(true)
+  })
+
+  it('is false for a model that is not loaded', () => {
+    expect(isResident('qwen2.5-0.5b', ['gemma-4-e2b'])).toBe(false)
+  })
+
+  it('is false when the status carries no list at all', () => {
+    // A surface that has never received a status must not claim readiness.
+    expect(isResident('gemma-4-e2b', undefined)).toBe(false)
+    expect(isResident('gemma-4-e2b', [])).toBe(false)
+  })
+
+  it('is what the panel gates its composer on', () => {
+    // Re-inlining `currentModelId === MODEL_ID` would pass every behavioural
+    // test here while restoring the exact bug a user reported: the popup
+    // saying "Active" beside a composer saying "Load the model to start
+    // chatting".
+    const src = readFileSync(resolve(__dirname, '../ui/chat-panel.ts'), 'utf-8')
+    expect(src).toContain('isResident(MODEL_ID, loadedModelIds)')
+    expect(src).not.toMatch(/status\.currentModelId === MODEL_ID/)
+  })
+})
+
+describe('the external ping does not advertise unloadable models', () => {
+  it('filters supportedModels through isLoadable', () => {
+    const src = readFileSync(resolve(__dirname, '../background/external-bridge.ts'), 'utf-8')
+    expect(src).toMatch(/supportedModels:[\s\S]{0,200}isLoadable/)
+    expect(src).not.toMatch(/supportedModels: Object\.keys\(MODELS\),/)
   })
 })

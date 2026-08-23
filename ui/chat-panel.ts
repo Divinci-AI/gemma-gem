@@ -29,6 +29,7 @@ import {
   isLoadable,
   modelMenuStatus,
   shouldAdoptRememberedModel,
+  isResident,
 } from '@/shared/model-availability'
 import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
 import {
@@ -1261,7 +1262,10 @@ export function mountChatPanel(
     // mirrored to STORAGE_KEY_LOADING by the SW; reflect it even before this
     // surface's own status catches up.
     isLoading = status.loadingModelId != null || mirrorLoadingId != null
-    isLoaded = status.isLoaded && status.currentModelId === MODEL_ID
+    // Residency, not active-target — see isResident(). `status.isLoaded` is
+    // "some model is loaded", which says nothing about the one this surface is
+    // pointing at.
+    isLoaded = isResident(MODEL_ID, loadedModelIds)
 
     if (isLoading && status.loadProgress) {
       const { bytesLoaded, bytesTotal } = status.loadProgress

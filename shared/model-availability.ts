@@ -54,3 +54,25 @@ export function modelMenuStatus(cfg: ModelConfig, resident: boolean): ModelMenuS
   if (cfg.comingSoon) return { label: 'Coming soon', disabled: true }
   return { label: resident ? 'loaded' : cfg.downloadSize, disabled: false }
 }
+
+/**
+ * Can the surface chat with `modelId` right now?
+ *
+ * Residency, NOT "is it the active target". `ChatHost.chat()` takes an explicit
+ * modelId and serves any resident model, so gating the composer on
+ * `currentModelId === MODEL_ID` refused to send for a model that was loaded and
+ * would have answered. That is how the popup and the panel came to disagree in
+ * front of a user on 2026-08-23: the popup said `Active` (it reads
+ * `loadedModelIds` / `activeModelId`) while the panel said "Load the model to
+ * start chatting" (it read `currentModelId`). Two surfaces, one host, two
+ * different questions.
+ *
+ * Both read residency now, so the disagreement is not a bug to re-fix — it is
+ * unrepresentable.
+ */
+export function isResident(
+  modelId: ModelId,
+  loadedModelIds: readonly ModelId[] | undefined,
+): boolean {
+  return loadedModelIds?.includes(modelId) ?? false
+}

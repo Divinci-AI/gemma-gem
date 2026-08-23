@@ -23,7 +23,8 @@
  * hydrate the user's inference defaults directly.
  */
 import { ChatHost } from '@/offscreen/chat-host'
-import { emptyBreakdown } from '@/offscreen/cache-breakdown'
+import { computeCacheBreakdown, emptyBreakdown } from '@/offscreen/cache-breakdown'
+import type { CacheBreakdown } from '@/offscreen/cache-breakdown'
 import { log } from '@/shared/logger'
 import type { DivinciExternalEvent, InternalStatusResponse } from '@/shared/messages'
 import { DEFAULT_SETTINGS, STORAGE_KEY_SETTINGS, type UserSettings } from '@/shared/models'
@@ -71,6 +72,33 @@ function emit(event: DivinciExternalEvent): void {
   }
 }
 
+/**
+ * Which models' weights are already on disk.
+ *
+ * This iframe used to report `emptyBreakdown()` unconditionally, which is not
+ * "unknown" to any consumer — it reads as "nothing is cached". Two things
+ * silently depended on it and both broke on this surface only:
+ *   - the panel's auto-load, which requires `cacheBreakdown[id].isCached`, so
+ *     it NEVER fired in the in-page dock however many times the user had
+ *     loaded that model;
+ *   - "Loading from cache" vs "Downloading model", so a disk read was
+ *     announced as a ~2.9 GB download.
+ * The iframe is same-origin with the offscreen document, so it reads the very
+ * same Cache API — there was never a reason for it to be blind.
+ */
+let cacheBreakdown: CacheBreakdown = emptyBreakdown()
+async function recomputeCacheBreakdown(): Promise<void> {
+  try {
+    cacheBreakdown = await computeCacheBreakdown(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      typeof caches !== 'undefined' ? (caches as any) : undefined,
+    )
+  } catch (e) {
+    log.debug('recomputeCacheBreakdown failed:', e)
+  }
+}
+void recomputeCacheBreakdown()
+
 /** Chats currently tracked, keyed by requestId, so abort can flag the right one. */
 const chats = new Map<string, { aborted: boolean; genAbort: AbortController }>()
 
@@ -78,6 +106,7 @@ async function handleLoad(req: IncomingReq): Promise<void> {
   const requestId = req.requestId ?? ''
   const modelId = req.modelId as Parameters<ChatHost['load']>[0]
   const start = Date.now()
+  const fromCache = cacheBreakdown[modelId]?.isCached === true
   try {
     await host.load(modelId, (info) => {
       emit({
@@ -89,10 +118,12 @@ async function handleLoad(req: IncomingReq): Promise<void> {
         bytesLoaded: info.bytesLoaded,
         bytesTotal: info.bytesTotal,
         currentFile: info.currentFile,
-        fromCache: false,
+        fromCache,
       })
     })
-    emit({ type: 'divinci:load-done', requestId, modelId, loadTimeMs: Date.now() - start, fromCache: false })
+    // The weights are on disk now even if they were not before.
+    void recomputeCacheBreakdown()
+    emit({ type: 'divinci:load-done', requestId, modelId, loadTimeMs: Date.now() - start, fromCache })
   } catch (err) {
     emit({ type: 'divinci:error', requestId, message: (err as Error)?.message ?? String(err), fatal: true })
   }
@@ -168,7 +199,7 @@ function statusResponse(): InternalStatusResponse {
     queueDepth: host.getQueueDepth(),
     loadProgress: host.getLatestProgress(),
     lastError: host.getLastError(),
-    cacheBreakdown: emptyBreakdown(),
+    cacheBreakdown,
     settings: { ...userSettings },
   }
 }
