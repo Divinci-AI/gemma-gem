@@ -18,6 +18,7 @@ import type {
 } from '@/shared/messages'
 import { isLoadable } from '@/shared/model-availability'
 import { MODELS, STORAGE_KEY_MODEL, STORAGE_KEY_LOADING, STORAGE_KEY_SETTINGS, STORAGE_KEY_HANDLE_HIDDEN, type ModelId, type LoadingMirror } from '@/shared/models'
+import { STORAGE_KEY_HANDLE_SHOWN, shouldShowHandle } from '@/shared/handle-visibility'
 import {
   STORAGE_KEY_ORIGIN_GRANTS,
   sanitizeGrantMap,
@@ -54,6 +55,7 @@ const els = {
   cacheDetails: document.querySelectorAll<HTMLElement>('[data-cache-detail]'),
   themeSelect: document.getElementById('setting-theme') as HTMLSelectElement,
   showHandleToggle: document.getElementById('setting-show-handle') as HTMLInputElement,
+  openOverlayBtn: document.getElementById('open-overlay-btn') as HTMLButtonElement,
   readPageContentToggle: document.getElementById('setting-read-page-content') as HTMLInputElement,
   wwwRagGroundingToggle: document.getElementById('setting-www-rag-grounding') as HTMLInputElement,
   allowChatDataUseToggle: document.getElementById('setting-allow-chat-data-use') as HTMLInputElement,
@@ -836,15 +838,30 @@ els.themeSelect.addEventListener('change', () => {
   void sendInternal({ type: 'internal:set-settings', theme })
 })
 
-// In-page handle visibility (it can be hidden by double-clicking it on a page).
+// In-page handle visibility. OFF by default since 0.14.9 — see
+// shared/handle-visibility.ts for why, and for the one legacy case migrated.
 async function loadShowHandle(): Promise<void> {
-  const stored = await chrome.storage.local.get(STORAGE_KEY_HANDLE_HIDDEN)
-  els.showHandleToggle.checked = stored[STORAGE_KEY_HANDLE_HIDDEN] !== true
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEY_HANDLE_HIDDEN,
+    STORAGE_KEY_HANDLE_SHOWN,
+  ])
+  els.showHandleToggle.checked = shouldShowHandle(stored, STORAGE_KEY_HANDLE_HIDDEN)
 }
 els.showHandleToggle.addEventListener('change', () => {
-  // Checked = shown → hidden flag is the inverse. content.ts reacts live via
-  // chrome.storage.onChanged.
-  void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: !els.showHandleToggle.checked })
+  // content.ts reacts live via chrome.storage.onChanged.
+  void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_SHOWN]: els.showHandleToggle.checked })
+})
+
+// The toolbar icon is now the primary way into the in-page dock, so this
+// button is load-bearing rather than a convenience: through 0.14.8 the handle
+// was the ONLY entry point, and defaulting it off without this would strand
+// the feature entirely.
+els.openOverlayBtn.addEventListener('click', () => {
+  // Not an InternalRequest: the panel-mode bridge listens for these four
+  // window-management messages on its own loose onMessage handler.
+  void chrome.runtime.sendMessage({ type: 'internal:open-overlay' }).catch(() => {})
+  // Close the popup so the dock the user just asked for is what they see.
+  window.close()
 })
 
 // Initial paint + steady poll while popup is open

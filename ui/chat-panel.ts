@@ -31,6 +31,11 @@ import {
   shouldAdoptRememberedModel,
   isResident,
 } from '@/shared/model-availability'
+import {
+  STORAGE_KEY_HANDLE_SHOWN,
+  shouldShowHandle,
+  handleMigration,
+} from '@/shared/handle-visibility'
 import { SIDEBAR_PORT_NAME } from '@/background/internal-bridge'
 import {
   MODELS,
@@ -1241,9 +1246,11 @@ export function mountChatPanel(
       if (root.classList.contains('dls-open')) setOpen(false, false)
     } else {
       // No widget anymore → restore the launcher unless the user hid it manually.
-      void chrome.storage.local.get(STORAGE_KEY_HANDLE_HIDDEN).then((s) => {
-        el.launcher.hidden = s[STORAGE_KEY_HANDLE_HIDDEN] === true
-      })
+      void chrome.storage.local
+        .get([STORAGE_KEY_HANDLE_HIDDEN, STORAGE_KEY_HANDLE_SHOWN])
+        .then((s) => {
+          el.launcher.hidden = !shouldShowHandle(s, STORAGE_KEY_HANDLE_HIDDEN)
+        })
     }
   }
 
@@ -2544,9 +2551,14 @@ export function mountChatPanel(
   }
 
   void chrome.storage.local
-    .get([STORAGE_KEY_HANDLE_TOP, STORAGE_KEY_HANDLE_HIDDEN])
+    .get([STORAGE_KEY_HANDLE_TOP, STORAGE_KEY_HANDLE_HIDDEN, STORAGE_KEY_HANDLE_SHOWN])
     .then((s) => {
-      if (s[STORAGE_KEY_HANDLE_HIDDEN] === true) el.launcher.hidden = true
+      // Off unless asked for — see shared/handle-visibility.ts.
+      el.launcher.hidden = !shouldShowHandle(s, STORAGE_KEY_HANDLE_HIDDEN) || deferredToEmbed
+      const migrated = handleMigration(s, STORAGE_KEY_HANDLE_HIDDEN)
+      if (migrated !== null) {
+        void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_SHOWN]: migrated })
+      }
       const frac = s[STORAGE_KEY_HANDLE_TOP]
       if (typeof frac === 'number') applyHandleTopFraction(frac)
     })
@@ -2645,7 +2657,7 @@ export function mountChatPanel(
   })
   el.launcher.addEventListener('dblclick', () => {
     el.launcher.hidden = true
-    void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_HIDDEN]: true })
+    void chrome.storage.local.set({ [STORAGE_KEY_HANDLE_SHOWN]: false })
   })
   el.close.addEventListener('click', () => setOpen(false))
   el.newChatBtn.addEventListener('click', newChat)
@@ -2877,8 +2889,8 @@ export function mountChatPanel(
     // Page-reading toggle changed in the popup → update behavior + disclaimer.
     if (STORAGE_KEY_SETTINGS in changes) void refreshPageReadingSetting()
     // Live show/hide the handle when toggled from the popup.
-    if (STORAGE_KEY_HANDLE_HIDDEN in changes) {
-      el.launcher.hidden = changes[STORAGE_KEY_HANDLE_HIDDEN].newValue === true || deferredToEmbed
+    if (STORAGE_KEY_HANDLE_SHOWN in changes) {
+      el.launcher.hidden = changes[STORAGE_KEY_HANDLE_SHOWN].newValue !== true || deferredToEmbed
     }
     // Global-mode flipped in another tab → adopt it + reload this context's
     // active conversation so the model genuinely follows across tabs.

@@ -153,3 +153,30 @@ NOT done because it invalidates `e2e/extension-web-accessible.spec.ts`, which
 waits for the frame to appear on page load, and the machine was at 233 MB
 unused with 16 GB of swap in use — the documented freeze condition — so the
 browser test could not be re-run. Do it with a browser available.
+
+## 10. The launcher handle was drawn on every page by default — FIXED
+
+Through 0.14.8 a purple star handle was pinned to the right edge of every site
+the user visited. Reported as intrusive on 2026-08-23, and it is: browser
+extensions conventionally put their entry point on the TOOLBAR, not on your
+pages.
+
+It is now off by default (`shared/handle-visibility.ts`), with the popup's
+"Open on this page" button as the way in.
+
+⚠️ **That button had to be built as part of the same change.** Through 0.14.8
+the handle was the ONLY way to open the in-page dock — no keyboard command
+(`commands` is unset in the manifest) and no popup action. Defaulting the
+handle off on its own would have made the dock unreachable. A test asserts the
+button exists.
+
+The storage key changed with the default. `divinci_sidebar_handle_hidden`
+defaulting to "hidden" reads backwards at every call site (`hidden !== true`
+meaning shown), which is how a polarity bug gets written later; the new
+`divinci_sidebar_handle_shown` states what it controls. The legacy key is
+honoured for exactly one case: a user who wrote `hidden === false` by
+re-enabling the handle from the popup had actively asked for it, and is
+migrated rather than overridden.
+
+Note this does NOT fix bug 9 — the iframe is still injected on every page even
+with nothing visible, which is now purely invisible cost.

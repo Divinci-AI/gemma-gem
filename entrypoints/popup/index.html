@@ -37,6 +37,16 @@
       </div>
     </header>
 
+    <!-- With the in-page handle off by default (0.14.9), this is the way in.
+         It must stay above the fold: it is the only entry point most users
+         will ever see. -->
+    <section id="open-overlay-row">
+      <button id="open-overlay-btn" class="open-overlay-btn" type="button"
+              title="Open the Divinci chat dock on the page you are viewing.">
+        Open on this page
+      </button>
+    </section>
+
     <section id="status">
       <div class="status-row">
         <span class="status-label" title="The model currently in your GPU memory. Cleared by Unload.">Loaded model</span>
@@ -168,7 +178,7 @@
             </select>
           </div>
           <div class="setting-row setting-row-checkbox">
-            <label for="setting-show-handle" title="The draggable purple-star handle on the right edge of web pages. Double-click it to hide; re-enable here.">Show in-page chat handle</label>
+            <label for="setting-show-handle" title="A draggable handle pinned to the right edge of every page you visit, as a shortcut to the chat dock. Off by default — use “Open on this page” instead. Double-click the handle to hide it again.">Show handle on every page</label>
             <input type="checkbox" id="setting-show-handle" />
           </div>
         </div>

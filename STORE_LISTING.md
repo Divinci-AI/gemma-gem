@@ -110,7 +110,7 @@ Required for the optional signed-in features. divinci-prod.us.auth0.com is our i
 
 ### content script (`<all_urls>`)
 ```
-The extension provides an in-page side-panel assistant the user can open on any page (a launcher button + slide-out panel rendered in an isolated Shadow DOM). The content script also powers the page-index feature: ONLY while the panel is open AND the user is signed in, it reads the current page's title, address, and visible text LOCALLY to (a) compute a one-way content hash and (b) send the trimmed address + that hash to Divinci to check index freshness. The page's content is not transmitted. Sensitive sites (auth/account, banking, webmail, healthcare, local/private hosts) are skipped client-side. All sites are required because the assistant is meant to be available on any page the user chooses to open it on.
+The extension provides an in-page side-panel assistant the user can open on any page. It is opened from the extension's toolbar icon ("Open on this page"); the panel itself is rendered in an isolated Shadow DOM. An optional draggable in-page handle is available as a shortcut and is OFF by default, so nothing is drawn over a page unless the user asks for it. The content script also powers the page-index feature: ONLY while the panel is open AND the user is signed in, it reads the current page's title, address, and visible text LOCALLY to (a) compute a one-way content hash and (b) send the trimmed address + that hash to Divinci to check index freshness. The page's content is not transmitted. Sensitive sites (auth/account, banking, webmail, healthcare, local/private hosts) are skipped client-side. All sites are required because the assistant is meant to be available on any page the user chooses to open it on.
 ```
 
 ---

@@ -234,6 +234,31 @@ header h1 {
   color: var(--c-text);
 }
 
+/* The primary way into the in-page dock since 0.14.9, when the always-on
+   handle was turned off by default. Full width and accent-coloured because it
+   is the only entry point most users will ever see — an `inline-action`-sized
+   link here would hide the feature. */
+#open-overlay-row {
+  padding: 10px 14px 0;
+}
+.open-overlay-btn {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--c-accent);
+  border: 1px solid var(--c-accent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.open-overlay-btn:hover { background: var(--c-accent-hover); }
+.open-overlay-btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+}
+
 .inline-action {
   padding: 2px 8px;
   font-size: 11px;
